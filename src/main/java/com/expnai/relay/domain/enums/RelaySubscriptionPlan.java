@@ -1,7 +1,7 @@
 package com.expnai.relay.domain.enums;
 
 public enum RelaySubscriptionPlan {
-	MONTHLY("MONTHLY"),
+	SIX_MONTHS("SIX_MONTHS"),
 	YEARLY("YEARLY");
 
 	private final String code;

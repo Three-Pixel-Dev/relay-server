@@ -28,8 +28,9 @@ public class RelaySubscription extends MasterEntity {
 	@Column(name = "plan", nullable = false, length = 20)
 	private RelaySubscriptionPlan plan;
 
+	/** No trial — new paid subscriptions start ACTIVE (payment provider TBD). */
 	@Column(name = "status", nullable = false, length = 20)
-	private RelaySubscriptionStatus status = RelaySubscriptionStatus.TRIALING;
+	private RelaySubscriptionStatus status = RelaySubscriptionStatus.ACTIVE;
 
 	@Column(name = "stripe_customer_id", length = 255)
 	private String stripeCustomerId;
@@ -37,6 +38,15 @@ public class RelaySubscription extends MasterEntity {
 	@Column(name = "stripe_subscription_id", length = 255)
 	private String stripeSubscriptionId;
 
+	@Column(name = "current_period_start")
+	private Instant currentPeriodStart;
+
 	@Column(name = "current_period_end")
 	private Instant currentPeriodEnd;
+
+	@Column(name = "cancel_at_period_end", nullable = false)
+	private boolean cancelAtPeriodEnd = false;
+
+	@Column(name = "canceled_at")
+	private Instant canceledAt;
 }
