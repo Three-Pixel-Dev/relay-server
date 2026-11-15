@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
+import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
@@ -51,6 +52,14 @@ public class RelayAuthController {
 			@Valid @RequestBody RelayLoginRequest request,
 			HttpServletRequest httpRequest) {
 		return authService.login(request, clientInfo(httpRequest));
+	}
+
+	@PostMapping("/google")
+	@Operation(summary = "Login or signup with Google ID token")
+	public ApiResponse<RelayLoginResponse> loginWithGoogle(
+			@Valid @RequestBody RelayGoogleLoginRequest request,
+			HttpServletRequest httpRequest) {
+		return authService.loginWithGoogle(request, clientInfo(httpRequest));
 	}
 
 	@PostMapping("/refresh-token")

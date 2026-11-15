@@ -8,6 +8,8 @@ public record RelayMeResponse(
 		String name,
 		String role,
 		boolean onboardSeen,
+		boolean googleLinked,
+		String avatarUrl,
 		Long currentSessionId,
 		Instant createdAt,
 		RelaySubscriptionSummaryResponse subscription) {

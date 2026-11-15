@@ -18,6 +18,7 @@ public class RelayUser extends MasterEntity {
 	@Column(name = "email", length = 255)
 	private String email;
 
+	/** Null for Google-only accounts. */
 	@Column(name = "password_hash", length = 255)
 	private String passwordHash;
 
@@ -32,4 +33,11 @@ public class RelayUser extends MasterEntity {
 
 	@Column(name = "token_version", nullable = false)
 	private long tokenVersion = 0L;
+
+	/** Google subject (`sub`) from verified ID token. */
+	@Column(name = "google_id", length = 100, unique = true)
+	private String googleId;
+
+	@Column(name = "avatar_url", length = 2000)
+	private String avatarUrl;
 }
