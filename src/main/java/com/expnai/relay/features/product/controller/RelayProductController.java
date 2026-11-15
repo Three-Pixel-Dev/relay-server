@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.features.product.dto.request.RelayAddSourcesRequest;
@@ -53,6 +54,12 @@ public class RelayProductController {
 	@Operation(summary = "Get product detail by ID")
 	public ApiResponse<RelayProductResponse> getProduct(@PathVariable Long id) {
 		return productService.getProduct(id);
+	}
+
+	@GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+	@Operation(summary = "SSE stream for product step progress and terminal product updates")
+	public SseEmitter streamProductEvents(@PathVariable Long id) {
+		return productService.subscribeEvents(id);
 	}
 
 	@DeleteMapping("/{id}")

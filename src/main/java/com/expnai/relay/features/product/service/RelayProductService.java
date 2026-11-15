@@ -3,6 +3,7 @@ package com.expnai.relay.features.product.service;
 import java.util.List;
 
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.features.product.dto.request.RelayAddSourcesRequest;
@@ -35,5 +36,7 @@ public interface RelayProductService {
 	ApiResponse<RelayProductResponse> cancel(Long productId);
 
 	ApiResponse<RelayProductResponse> resume(Long productId);
+
+	SseEmitter subscribeEvents(Long productId);
 }
 

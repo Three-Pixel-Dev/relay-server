@@ -5,6 +5,7 @@ import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,8 +29,11 @@ import com.expnai.relay.domain.repository.RelayThreadMessageRepository;
 import com.expnai.relay.features.ai.GeminiEmbeddingService;
 import com.expnai.relay.features.ai.SourceSummaryLlmService;
 import com.expnai.relay.features.ai.SourceSummaryLlmService.GeneratedSourceProfile;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.ingest.SourceParserService.ParseResult;
 import com.expnai.relay.features.product.ingest.SourceParserService.PassageChunk;
+import com.expnai.relay.features.product.mapper.RelayProductMapper;
+import com.expnai.relay.features.product.sse.ProductSseHub;
 import com.expnai.relay.features.retrieval.PassageRetrievalService;
 import com.expnai.relay.features.retrieval.RetrievedPassage;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,6 +56,8 @@ public class SourceIngestionWorker {
 	private final GeminiEmbeddingService geminiEmbeddingService;
 	private final PassageRetrievalService passageRetrievalService;
 	private final SourceSummaryLlmService sourceSummaryLlmService;
+	private final RelayProductMapper productMapper;
+	private final ProductSseHub productSseHub;
 	private final TransactionTemplate transactionTemplate;
 	private final ObjectMapper objectMapper;
 
@@ -182,6 +188,7 @@ public class SourceIngestionWorker {
 								"Next: **Profitable pockets**. About $0.30 in AI, a minute.");
 					});
 				});
+				publishTerminalProduct(productId);
 			}
 			else {
 				failStepGracefully(productId,
@@ -249,6 +256,8 @@ public class SourceIngestionWorker {
 			String summaryMsg = buildSummaryReadyMessage(finalVideos, finalDocs, finalPassages);
 			saveThreadMessage(product, RelayThreadWho.RELAY, summaryMsg);
 		});
+
+		publishTerminalProduct(productId);
 	}
 
 	private String buildSummarySearchQuery(RelayProduct product, List<RelaySource> sources) {
@@ -305,6 +314,11 @@ public class SourceIngestionWorker {
 				}
 			});
 		});
+		productSseHub.publish(
+				productId,
+				"progress",
+				Map.of("progress", List.copyOf(progressLines), "stepStatus", "running"),
+				false);
 	}
 
 	private void markSourceReading(Long sourceId, Long productId) {
@@ -375,6 +389,34 @@ public class SourceIngestionWorker {
 				productRepository.save(product);
 				saveThreadMessage(product, RelayThreadWho.RELAY, message);
 			});
+		});
+		RelayProductResponse dto = buildProductResponse(productId);
+		if (dto != null) {
+			productSseHub.publish(productId, "product", dto, true);
+		}
+		else {
+			productSseHub.publish(productId, "error", Map.of("message", message), true);
+		}
+	}
+
+	private void publishTerminalProduct(Long productId) {
+		RelayProductResponse dto = buildProductResponse(productId);
+		if (dto != null) {
+			productSseHub.publish(productId, "product", dto, true);
+		}
+	}
+
+	private RelayProductResponse buildProductResponse(Long productId) {
+		return transactionTemplate.execute(status -> {
+			RelayProduct product = productRepository.findById(productId).orElse(null);
+			if (product == null) {
+				return null;
+			}
+			List<RelaySource> sources = sourceRepository.findByProductIdOrderByCreatedAtAsc(productId);
+			RelaySourceProfile profile = sourceProfileRepository.findByProductId(productId).orElse(null);
+			List<RelayThreadMessage> messages = threadMessageRepository
+					.findByProductIdOrderByCreatedAtAscIdAsc(productId);
+			return productMapper.toDto(product, sources, profile, messages);
 		});
 	}
 }

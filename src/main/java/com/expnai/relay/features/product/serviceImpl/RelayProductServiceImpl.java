@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
@@ -46,6 +47,7 @@ import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.ingest.SourceIngestionWorker;
 import com.expnai.relay.features.product.mapper.RelayProductMapper;
 import com.expnai.relay.features.product.service.RelayProductService;
+import com.expnai.relay.features.product.sse.ProductSseHub;
 import com.expnai.relay.features.product.storage.FileStorageService;
 
 import lombok.RequiredArgsConstructor;
@@ -75,6 +77,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	private final FileStorageService fileStorageService;
 	private final RelayAiCredentialService aiCredentialService;
 	private final SourceIngestionWorker sourceIngestionWorker;
+	private final ProductSseHub productSseHub;
 
 	@Override
 	@Transactional(readOnly = true)
@@ -401,7 +404,9 @@ public class RelayProductServiceImpl implements RelayProductService {
 				"Paused. Everything so far is kept; $"
 						+ spend.setScale(2, RoundingMode.HALF_UP)
 						+ " spent on AI. Resume from My products.");
-		return ApiResponse.ok("Product paused", toResponse(product));
+		RelayProductResponse response = toResponse(product);
+		productSseHub.publish(productId, "product", response, true);
+		return ApiResponse.ok("Product paused", response);
 	}
 
 	@Override
@@ -417,6 +422,21 @@ public class RelayProductServiceImpl implements RelayProductService {
 
 		saveThreadMessage(product, RelayThreadWho.RELAY, "Resumed.");
 		return ApiResponse.ok("Product resumed", toResponse(product));
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public SseEmitter subscribeEvents(Long productId) {
+		RelayProduct product = requireOwnedProduct(productId);
+		RelayProductResponse snapshot = toResponse(product);
+		SseEmitter emitter = productSseHub.subscribe(productId);
+		boolean running = product.getStage() == RelayProductStage.BUILD
+				&& "running".equals(product.getStepStatus());
+		productSseHub.sendToEmitter(productId, emitter, "snapshot", snapshot, false);
+		if (!running) {
+			productSseHub.sendToEmitter(productId, emitter, "product", snapshot, true);
+		}
+		return emitter;
 	}
 
 	private RelaySource createSourceEntity(RelayProduct product, RelaySourceInputDto dto) {

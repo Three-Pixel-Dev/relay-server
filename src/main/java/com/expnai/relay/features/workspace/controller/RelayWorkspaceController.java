@@ -31,6 +31,7 @@ import com.expnai.relay.domain.enums.RelayUserRole;
 import com.expnai.relay.domain.repository.RelayServiceConnectionRepository;
 import com.expnai.relay.domain.repository.RelaySubscriptionRepository;
 import com.expnai.relay.domain.repository.RelayUserRepository;
+import com.expnai.relay.features.auth.security.RelayUserPrincipal;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -133,7 +134,7 @@ public class RelayWorkspaceController {
 
 	private RelayUser requireCurrentUser() {
 		Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-		if (auth == null || !(auth.getPrincipal() instanceof RelayUser principal)) {
+		if (auth == null || !(auth.getPrincipal() instanceof RelayUserPrincipal principal)) {
 			throw new InvalidSessionException("Authentication required.");
 		}
 		return userRepository.findById(principal.getId())
@@ -151,7 +152,7 @@ public class RelayWorkspaceController {
 
 		String subPlan = null;
 		if (activeSub != null) {
-			subPlan = activeSub.getPlan() == RelaySubscriptionPlan.YEARLY ? "yearly" : "monthly";
+			subPlan = activeSub.getPlan() == RelaySubscriptionPlan.YEARLY ? "yearly" : "six_months";
 		}
 		out.put("sub", subPlan);
 		out.put("role", user.getRole() == RelayUserRole.ADMIN ? "admin" : "user");
