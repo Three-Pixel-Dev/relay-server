@@ -2,7 +2,7 @@ package com.expnai.relay.features.subscription.serviceImpl;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -123,7 +123,9 @@ public class RelaySubscriptionServiceImpl
 		subscription.setPlan(plan);
 		subscription.setStatus(RelaySubscriptionStatus.ACTIVE);
 		subscription.setCurrentPeriodStart(now);
-		subscription.setCurrentPeriodEnd(now.plus(monthsFor(plan), ChronoUnit.MONTHS));
+		// Instant does not support ChronoUnit.MONTHS — use zoned calendar arithmetic.
+		subscription.setCurrentPeriodEnd(
+				now.atZone(ZoneOffset.UTC).plusMonths(monthsFor(plan)).toInstant());
 		subscription.setCancelAtPeriodEnd(false);
 		RelaySubscription saved = subscriptionRepository.save(subscription);
 
