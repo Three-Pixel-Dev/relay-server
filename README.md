@@ -22,14 +22,16 @@ Copy `.env.example` to `.env` and fill in values (do not commit `.env`):
 
 | Variable | Purpose |
 |----------|---------|
+| `SERVER_PORT` | HTTP port for server (default: `8080`) |
 | `DATABASE_URL` | Neon-style Postgres URL |
 | `SPRING_DATASOURCE_URL` | JDBC URL (`jdbc:postgresql://…`) |
 | `SPRING_DATASOURCE_USERNAME` | DB user |
 | `SPRING_DATASOURCE_PASSWORD` | DB password |
 
-`application.properties` reads the Spring datasource vars:
+`application.properties` reads the server port and Spring datasource vars:
 
 ```properties
+server.port=${SERVER_PORT:8080}
 spring.datasource.url=${SPRING_DATASOURCE_URL}
 spring.datasource.username=${SPRING_DATASOURCE_USERNAME}
 spring.datasource.password=${SPRING_DATASOURCE_PASSWORD}
@@ -45,7 +47,13 @@ Schema is managed with `spring.jpa.hibernate.ddl-auto=update`.
 ./mvnw spring-boot:run
 ```
 
-Windows:
+Windows (loads `.env` automatically):
+
+```cmd
+.\run.bat
+```
+
+Or manually:
 
 ```powershell
 .\mvnw.cmd spring-boot:run
