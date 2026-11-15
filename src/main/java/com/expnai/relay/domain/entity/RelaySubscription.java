@@ -8,6 +8,8 @@ import com.expnai.relay.domain.enums.RelaySubscriptionStatus;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -25,10 +27,12 @@ public class RelaySubscription extends MasterEntity {
 	@JoinColumn(name = "user_id", nullable = false)
 	private RelayUser user;
 
+	@Enumerated(EnumType.STRING)
 	@Column(name = "plan", nullable = false, length = 20)
 	private RelaySubscriptionPlan plan;
 
 	/** No trial — new paid subscriptions start ACTIVE (payment provider TBD). */
+	@Enumerated(EnumType.STRING)
 	@Column(name = "status", nullable = false, length = 20)
 	private RelaySubscriptionStatus status = RelaySubscriptionStatus.ACTIVE;
 
