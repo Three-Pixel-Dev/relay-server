@@ -4,6 +4,7 @@ public enum RelaySourceStatus {
 	PENDING("PENDING"),
 	READING("READING"),
 	READY("READY"),
+	SKIPPED("SKIPPED"),
 	FAILED("FAILED");
 
 	private final String code;

@@ -1,7 +1,6 @@
 package com.expnai.relay.domain.entity;
 
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
+import org.hibernate.annotations.ColumnTransformer;
 
 import com.expnai.relay.common.persistence.MasterEntity;
 
@@ -21,6 +20,10 @@ import lombok.Setter;
 public class RelayPassage extends MasterEntity {
 
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
+	@JoinColumn(name = "product_id", nullable = false)
+	private RelayProduct product;
+
+	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "source_id", nullable = false)
 	private RelaySource source;
 
@@ -30,7 +33,7 @@ public class RelayPassage extends MasterEntity {
 	@Column(name = "locator", length = 500)
 	private String locator;
 
-	@JdbcTypeCode(SqlTypes.JSON)
-	@Column(name = "embedding", columnDefinition = "jsonb")
+	@ColumnTransformer(read = "embedding::text", write = "CAST(? AS vector)")
+	@Column(name = "embedding", columnDefinition = "vector(1536)")
 	private String embedding;
 }

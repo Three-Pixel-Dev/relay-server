@@ -2,6 +2,9 @@ package com.expnai.relay.domain.entity;
 
 import java.math.BigDecimal;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import com.expnai.relay.common.persistence.MasterEntity;
 import com.expnai.relay.domain.enums.RelayBuildMode;
 import com.expnai.relay.domain.enums.RelayProductStage;
@@ -60,4 +63,17 @@ public class RelayProduct extends MasterEntity {
 
 	@Column(name = "spend", precision = 12, scale = 2)
 	private BigDecimal spend = BigDecimal.ZERO;
+
+	@Column(name = "step_status", nullable = false, length = 20)
+	private String stepStatus = "todo";
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "step_progress", columnDefinition = "jsonb")
+	private String stepProgress;
+
+	@Column(name = "step_note", columnDefinition = "text")
+	private String stepNote;
+
+	@Column(name = "cancelled", nullable = false)
+	private boolean cancelled = false;
 }

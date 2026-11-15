@@ -37,4 +37,10 @@ public class RelaySource extends MasterEntity {
 
 	@Column(name = "status", nullable = false, length = 20)
 	private RelaySourceStatus status = RelaySourceStatus.PENDING;
+
+	@Column(name = "storage_key", length = 1000)
+	private String storageKey;
+
+	@Column(name = "error_message", columnDefinition = "text")
+	private String errorMessage;
 }
