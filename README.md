@@ -6,7 +6,8 @@ Spring Boot API for **Relay**, a digital product assistant that turns sources in
 
 - Java 21
 - Spring Boot 4.1
-- Spring Web MVC, Data JPA, Data JDBC, Validation, Actuator
+- Spring Web MVC, Data JPA, Data JDBC, Validation, Security, Actuator
+- JWT (jjwt), OpenAPI / Swagger
 - PostgreSQL (Neon)
 - Lombok
 - Maven Wrapper (`mvnw`)
@@ -27,6 +28,9 @@ Copy `.env.example` to `.env` and fill in values (do not commit `.env`):
 | `SPRING_DATASOURCE_URL` | JDBC URL (`jdbc:postgresql://…`) |
 | `SPRING_DATASOURCE_USERNAME` | DB user |
 | `SPRING_DATASOURCE_PASSWORD` | DB password |
+| `JWT_SECRET` | HMAC secret for access/refresh tokens |
+| `JWT_EXPIRATION_MS` | Access token TTL (default 1 day) |
+| `JWT_REFRESH_EXPIRATION_MS` | Refresh token TTL (default 7 days) |
 
 `application.properties` reads the server port and Spring datasource vars:
 
@@ -99,6 +103,27 @@ Aligned with the Relay product data model:
 | Ops | `RelayAuditEvent` |
 
 Each entity has a matching empty `*Repository` interface under `domain.repository`.
+
+
+## Accounts API
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/api/auth/signup` | public | Create account + JWT (no trial) |
+| POST | `/api/auth/login` | public | Login |
+| POST | `/api/auth/refresh-token` | public | Refresh tokens |
+| GET | `/api/auth/me` | JWT | Current user + subscription summary |
+| PUT | `/api/auth/profile` | JWT | Update name |
+| GET/POST/DELETE | `/api/auth/sessions`, `/logout`, `/logout-all` | JWT | Session management |
+| GET | `/api/subscription/plans` | public | 6-month and yearly plans |
+| GET | `/api/subscription/me` | JWT | Current subscription |
+| POST | `/api/subscription/subscribe` | JWT | Start/replace plan |
+| POST | `/api/subscription/cancel` | JWT | Cancel at period end |
+| POST | `/api/subscription/resume` | JWT | Undo cancel |
+| GET | `/api/subscription/history` | JWT | Billing history |
+| GET | `/api/subscription/billing-portal` | JWT | Placeholder until payment provider is set |
+
+Swagger UI: `/swagger-ui.html`
 
 ## License
 

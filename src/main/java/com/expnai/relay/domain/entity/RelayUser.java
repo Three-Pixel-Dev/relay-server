@@ -29,4 +29,7 @@ public class RelayUser extends MasterEntity {
 
 	@Column(name = "onboard_seen", nullable = false)
 	private boolean onboardSeen = false;
+
+	@Column(name = "token_version", nullable = false)
+	private long tokenVersion = 0L;
 }
