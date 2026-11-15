@@ -6,8 +6,11 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -17,6 +20,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
 import com.expnai.relay.common.exception.ResourceConflictException;
 import com.expnai.relay.common.exception.ResourceNotFoundException;
@@ -31,6 +35,7 @@ import com.expnai.relay.domain.repository.RelaySubscriptionRepository;
 import com.expnai.relay.domain.repository.RelayUserRepository;
 import com.expnai.relay.domain.repository.RelayUserSessionRepository;
 import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
+import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
@@ -41,6 +46,8 @@ import com.expnai.relay.features.auth.dto.response.RelayMeResponse;
 import com.expnai.relay.features.auth.dto.response.RelaySessionResponse;
 import com.expnai.relay.features.auth.mapper.RelayAuthMapper;
 import com.expnai.relay.features.auth.security.RelayUserPrincipal;
+import com.expnai.relay.features.auth.service.GoogleIdTokenVerifierService;
+import com.expnai.relay.features.auth.service.GoogleIdTokenVerifierService.VerifiedGoogleIdentity;
 import com.expnai.relay.features.auth.service.RelayAuthService;
 
 import lombok.RequiredArgsConstructor;
@@ -61,6 +68,7 @@ public class RelayAuthServiceImpl implements RelayAuthService {
 	private final UserDetailsService userDetailsService;
 	private final RelayJwtService jwtService;
 	private final RelayAuthMapper authMapper;
+	private final GoogleIdTokenVerifierService googleIdTokenVerifierService;
 
 	@Override
 	@Transactional
@@ -85,11 +93,90 @@ public class RelayAuthServiceImpl implements RelayAuthService {
 	@Transactional
 	public ApiResponse<RelayLoginResponse> login(RelayLoginRequest request, RelayClientInfo clientInfo) {
 		String email = normalizeEmail(request.getEmail());
+		RelayUser existing = userRepository.findByEmailIgnoreCase(email).orElse(null);
+		if (existing != null && (existing.getPasswordHash() == null || existing.getPasswordHash().isBlank())) {
+			throw new BusinessRuleException("This account uses Google Sign-In. Please continue with Google.");
+		}
 		authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(email, request.getPassword()));
 
 		RelayUser user = requireUser(email);
 		RelayUserSession session = createSession(user, clientInfo);
 		return ApiResponse.ok("Login successful", issueTokens(user, user.getTokenVersion(), session));
+	}
+
+	@Override
+	@Transactional
+	public ApiResponse<RelayLoginResponse> loginWithGoogle(RelayGoogleLoginRequest request, RelayClientInfo clientInfo) {
+		VerifiedGoogleIdentity identity = googleIdTokenVerifierService.verify(request.getIdToken());
+
+		String googleId = identity.googleId();
+		String email = identity.email();
+		String displayName = identity.displayName();
+		if (displayName == null || displayName.isBlank()) {
+			displayName = email != null && email.contains("@")
+					? email.substring(0, email.indexOf('@'))
+					: "Google User";
+		}
+
+		Optional<RelayUser> byGoogle = userRepository.findByGoogleId(googleId);
+		RelayUser user;
+
+		if (byGoogle.isPresent()) {
+			user = byGoogle.get();
+			if (identity.pictureUrl() != null && !identity.pictureUrl().isBlank()) {
+				user.setAvatarUrl(identity.pictureUrl());
+				user = userRepository.save(user);
+			}
+		}
+		else if (email != null && !email.isBlank()) {
+			Optional<RelayUser> byEmail = userRepository.findByEmailIgnoreCase(email);
+			if (byEmail.isPresent()) {
+				user = byEmail.get();
+				if (user.getGoogleId() != null && !user.getGoogleId().equals(googleId)) {
+					throw new BadCredentialsException("This email is already linked to another Google account.");
+				}
+				user.setGoogleId(googleId);
+				if (user.getName() == null || user.getName().isBlank()) {
+					user.setName(displayName);
+				}
+				if (identity.pictureUrl() != null && !identity.pictureUrl().isBlank()) {
+					user.setAvatarUrl(identity.pictureUrl());
+				}
+				user = userRepository.save(user);
+			}
+			else {
+				user = createGoogleUser(googleId, email, displayName, identity.pictureUrl());
+			}
+		}
+		else {
+			String syntheticEmail = "google_" + googleId + "@google.relay.local";
+			user = createGoogleUser(googleId, syntheticEmail, displayName, identity.pictureUrl());
+		}
+
+		if (!user.isEnable()) {
+			throw new BadCredentialsException("Account is deactivated. Please contact support.");
+		}
+
+		RelayUserSession session = createSession(user, clientInfo);
+		return ApiResponse.ok("Google login successful", issueTokens(user, user.getTokenVersion(), session));
+	}
+
+	private RelayUser createGoogleUser(String googleId, String email, String displayName, String pictureUrl) {
+		try {
+			RelayUser user = new RelayUser();
+			user.setGoogleId(googleId);
+			user.setEmail(email);
+			user.setName(displayName);
+			user.setAvatarUrl(pictureUrl);
+			user.setRole(RelayUserRole.USER);
+			user.setPasswordHash(null);
+			return userRepository.save(user);
+		}
+		catch (DataIntegrityViolationException race) {
+			return userRepository.findByGoogleId(googleId)
+					.or(() -> userRepository.findByEmailIgnoreCase(email))
+					.orElseThrow(() -> new BadCredentialsException("Could not complete Google Sign-In. Please try again."));
+		}
 	}
 
 	@Override

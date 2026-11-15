@@ -31,6 +31,7 @@ Copy `.env.example` to `.env` and fill in values (do not commit `.env`):
 | `JWT_SECRET` | HMAC secret for access/refresh tokens |
 | `JWT_EXPIRATION_MS` | Access token TTL (default 1 day) |
 | `JWT_REFRESH_EXPIRATION_MS` | Refresh token TTL (default 7 days) |
+| `GOOGLE_OAUTH_CLIENT_IDS` | Comma-separated Google OAuth client IDs (audiences) |
 
 `application.properties` reads the server port and Spring datasource vars:
 
@@ -111,6 +112,7 @@ Each entity has a matching empty `*Repository` interface under `domain.repositor
 |--------|------|------|---------|
 | POST | `/api/auth/signup` | public | Create account + JWT (no trial) |
 | POST | `/api/auth/login` | public | Login |
+| POST | `/api/auth/google` | public | Google Sign-In (ID token) |
 | POST | `/api/auth/refresh-token` | public | Refresh tokens |
 | GET | `/api/auth/me` | JWT | Current user + subscription summary |
 | PUT | `/api/auth/profile` | JWT | Update name |

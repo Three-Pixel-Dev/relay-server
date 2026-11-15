@@ -4,6 +4,7 @@ import java.util.List;
 
 import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
+import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
@@ -18,6 +19,8 @@ public interface RelayAuthService {
 	ApiResponse<RelayLoginResponse> signup(RelaySignupRequest request, RelayClientInfo clientInfo);
 
 	ApiResponse<RelayLoginResponse> login(RelayLoginRequest request, RelayClientInfo clientInfo);
+
+	ApiResponse<RelayLoginResponse> loginWithGoogle(RelayGoogleLoginRequest request, RelayClientInfo clientInfo);
 
 	ApiResponse<RelayLoginResponse> refreshToken(RelayRefreshTokenRequest request, RelayClientInfo clientInfo);
 

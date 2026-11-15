@@ -13,4 +13,6 @@ public interface RelayUserRepository extends BaseRepository<RelayUser> {
 	Optional<RelayUser> findByEmailIgnoreCase(String email);
 
 	boolean existsByEmailIgnoreCase(String email);
+
+	Optional<RelayUser> findByGoogleId(String googleId);
 }

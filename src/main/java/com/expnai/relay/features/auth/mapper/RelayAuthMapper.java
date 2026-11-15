@@ -32,6 +32,8 @@ public class RelayAuthMapper implements BaseMapper<RelayUser, RelayMeResponse> {
 				user.getName(),
 				user.getRole().name(),
 				user.isOnboardSeen(),
+				user.getGoogleId() != null && !user.getGoogleId().isBlank(),
+				user.getAvatarUrl(),
 				currentSessionId,
 				user.getCreatedAt(),
 				summary);

@@ -69,6 +69,7 @@ public class SecurityConfig {
 			auth.requestMatchers(
 					"/api/auth/signup",
 					"/api/auth/login",
+					"/api/auth/google",
 					"/api/auth/refresh-token").permitAll();
 			auth.requestMatchers(HttpMethod.GET, "/api/subscription/plans").permitAll();
 			auth.requestMatchers("/actuator/**", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll();
