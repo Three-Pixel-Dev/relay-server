@@ -1,0 +1,42 @@
+package com.expnai.relay.domain.entity;
+
+import java.time.Instant;
+
+import com.expnai.relay.common.persistence.MasterEntity;
+import com.expnai.relay.domain.enums.RelaySubscriptionPlan;
+import com.expnai.relay.domain.enums.RelaySubscriptionStatus;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import lombok.Getter;
+import lombok.Setter;
+
+@Getter
+@Setter
+@Entity
+@Table(name = "relay_subscription")
+public class RelaySubscription extends MasterEntity {
+
+	@ManyToOne(fetch = FetchType.LAZY, optional = false)
+	@JoinColumn(name = "user_id", nullable = false)
+	private RelayUser user;
+
+	@Column(name = "plan", nullable = false, length = 20)
+	private RelaySubscriptionPlan plan;
+
+	@Column(name = "status", nullable = false, length = 20)
+	private RelaySubscriptionStatus status = RelaySubscriptionStatus.TRIALING;
+
+	@Column(name = "stripe_customer_id", length = 255)
+	private String stripeCustomerId;
+
+	@Column(name = "stripe_subscription_id", length = 255)
+	private String stripeSubscriptionId;
+
+	@Column(name = "current_period_end")
+	private Instant currentPeriodEnd;
+}
