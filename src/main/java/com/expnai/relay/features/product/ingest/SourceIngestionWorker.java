@@ -174,7 +174,10 @@ public class SourceIngestionWorker {
 
 			markSourceReading(source.getId(), productId);
 			try {
-				ParseResult parsed = sourceParserService.parseSource(source);
+				ParseResult parsed = sourceParserService.parseSource(
+						source,
+						chatApiKey,
+						line -> addProgress(productId, progressLines, line));
 				if (!addedIndexingProgress) {
 					addProgress(productId, progressLines, "Indexing passages so every section can cite them");
 					addedIndexingProgress = true;

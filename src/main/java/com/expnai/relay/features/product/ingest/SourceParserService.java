@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,6 +37,7 @@ import org.springframework.stereotype.Service;
 
 import com.expnai.relay.domain.entity.RelaySource;
 import com.expnai.relay.domain.enums.RelaySourceKind;
+import com.expnai.relay.features.ai.GeminiUrlContextFetchService;
 import com.expnai.relay.features.product.storage.FileStorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -65,6 +67,8 @@ public class SourceParserService {
 			"\"captionTracks\":\\[\\{[^\\]]*?\"baseUrl\":\"([^\"]+)\"");
 
 	private final FileStorageService fileStorageService;
+	private final PlaywrightWebFetchService playwrightWebFetchService;
+	private final GeminiUrlContextFetchService geminiUrlContextFetchService;
 	private final ObjectMapper objectMapper;
 
 	@Value("${youtube.api.key:}")
@@ -77,12 +81,20 @@ public class SourceParserService {
 	}
 
 	public ParseResult parseSource(RelaySource source) {
+		return parseSource(source, null, null);
+	}
+
+	public ParseResult parseSource(RelaySource source, String chatApiKey) {
+		return parseSource(source, chatApiKey, null);
+	}
+
+	public ParseResult parseSource(RelaySource source, String chatApiKey, Consumer<String> progressCallback) {
 		RelaySourceKind kind = source.getKind();
 		if (kind == RelaySourceKind.FILE) {
 			return parseFileSource(source);
 		}
 		if (kind == RelaySourceKind.WEB) {
-			return parseWebSource(source);
+			return parseWebSource(source, chatApiKey, progressCallback);
 		}
 		if (kind == RelaySourceKind.YOUTUBE) {
 			return parseYoutubeSource(source);
@@ -242,7 +254,7 @@ public class SourceParserService {
 		return chunks;
 	}
 
-	private ParseResult parseWebSource(RelaySource source) {
+	private ParseResult parseWebSource(RelaySource source, String chatApiKey, Consumer<String> progressCallback) {
 		String rawUrl = source.getUrl() != null ? source.getUrl().trim() : "";
 		if (rawUrl.isEmpty()) {
 			throw new IllegalArgumentException("Missing URL for web source " + source.getName());
@@ -253,38 +265,64 @@ public class SourceParserService {
 			throw new IllegalArgumentException("Page disallowed by site's robots.txt: " + fullUrl);
 		}
 
+		String displayName = (source.getName() != null && !source.getName().isBlank())
+				? source.getName()
+				: uri.getHost();
+
+		String combined = null;
+		String playwrightFailureReason = null;
+
 		try {
-			Document doc = Jsoup.connect(fullUrl)
-					.userAgent("RelayBot/1.0")
-					.timeout(15000)
-					.followRedirects(true)
-					.get();
+			String html = playwrightWebFetchService.fetchRenderedHtml(fullUrl);
+			Document doc = Jsoup.parse(html, fullUrl);
 			doc.select("script, style, noscript, iframe, svg, nav, footer, header, aside").remove();
 
 			Element mainEl = doc.selectFirst("article, main, [role=main]");
-			String bodyText = normalizeWhitespace(mainEl != null ? mainEl.text() : doc.body() != null ? doc.body().text() : "");
+			String bodyText = normalizeWhitespace(
+					mainEl != null ? mainEl.text() : doc.body() != null ? doc.body().text() : "");
 			String title = doc.title() != null ? doc.title().trim() : "";
-			String combined = (title.isEmpty() ? "" : title + "\n\n") + bodyText;
-			if (combined.isBlank()) {
-				throw new IllegalArgumentException("No readable text content found at " + fullUrl);
+			String candidate = (title.isEmpty() ? "" : title + "\n\n") + bodyText;
+			if (!candidate.isBlank()) {
+				combined = candidate;
 			}
+			else {
+				playwrightFailureReason = "No readable text content found in rendered HTML";
+			}
+		}
+		catch (Exception pwEx) {
+			playwrightFailureReason = pwEx.getMessage() != null ? pwEx.getMessage() : "Browser render failed";
+		}
 
-			String displayName = (source.getName() != null && !source.getName().isBlank())
-					? source.getName()
-					: uri.getHost();
-			List<String> windows = splitTextIntoWindows(combined);
-			List<PassageChunk> chunks = new ArrayList<>();
-			for (String w : windows) {
-				chunks.add(new PassageChunk(w, displayName));
+		if (combined == null || combined.isBlank()) {
+			log.warn("Playwright could not read {} ({}); falling back to Gemini URL Context",
+					fullUrl, playwrightFailureReason);
+			if (progressCallback != null) {
+				progressCallback.accept("Browser could not read " + displayName + "; trying Gemini URL read");
 			}
-			return new ParseResult(chunks, 0, 1);
+			try {
+				String geminiText = geminiUrlContextFetchService.extractPageText(chatApiKey, fullUrl);
+				combined = normalizeWhitespace(geminiText);
+			}
+			catch (Exception geminiEx) {
+				String geminiReason = geminiEx.getMessage() != null ? geminiEx.getMessage() : "Gemini URL read failed";
+				throw new IllegalArgumentException(
+						"Could not read web page " + fullUrl + " (Browser: " + playwrightFailureReason
+								+ "; Gemini fallback: " + geminiReason
+								+ "). You can save the page as a document and upload it instead.",
+						geminiEx);
+			}
 		}
-		catch (IllegalArgumentException ex) {
-			throw ex;
+
+		if (combined == null || combined.isBlank()) {
+			throw new IllegalArgumentException("No readable text content found at " + fullUrl);
 		}
-		catch (Exception ex) {
-			throw new IllegalArgumentException("Failed to fetch web page " + fullUrl + ": " + ex.getMessage(), ex);
+
+		List<String> windows = splitTextIntoWindows(combined);
+		List<PassageChunk> chunks = new ArrayList<>(windows.size());
+		for (String w : windows) {
+			chunks.add(new PassageChunk(w, displayName));
 		}
+		return new ParseResult(chunks, 0, 1);
 	}
 
 	private ParseResult parseYoutubeSource(RelaySource source) {
