@@ -36,7 +36,10 @@ public class SourceSummaryLlmService {
 
 	private final ObjectMapper objectMapper;
 
-	public record ThemeItem(String t, String d, String level) {
+	public record ThemeItem(String t, String d, String level, Integer hits) {
+		public ThemeItem(String t, String d, String level) {
+			this(t, d, level, null);
+		}
 	}
 
 	public record GeneratedSourceProfile(
@@ -53,10 +56,19 @@ public class SourceSummaryLlmService {
 			String apiKey,
 			RelayProduct product,
 			List<RetrievedPassage> passages) {
+		int fallbackCount = passages != null ? passages.size() : 0;
+		return summarizePassages(apiKey, product, passages, fallbackCount);
+	}
+
+	public GeneratedSourceProfile summarizePassages(
+			String apiKey,
+			RelayProduct product,
+			List<RetrievedPassage> passages,
+			int totalPassages) {
 		if (apiKey == null || apiKey.isBlank()) {
 			throw new BusinessRuleException("Missing Text model API key for source summary.");
 		}
-		String prompt = buildPrompt(product, passages);
+		String prompt = buildPrompt(product, passages, totalPassages);
 		String rawJson;
 		if (apiKey.trim().startsWith("sk-")) {
 			rawJson = callOpenAiCompatible(apiKey.trim(), prompt);
@@ -67,7 +79,7 @@ public class SourceSummaryLlmService {
 		return parseResponse(rawJson);
 	}
 
-	private String buildPrompt(RelayProduct product, List<RetrievedPassage> passages) {
+	private String buildPrompt(RelayProduct product, List<RetrievedPassage> passages, int totalPassages) {
 		StringBuilder sb = new StringBuilder();
 		sb.append("""
 				You are Relay, a digital product strategist and editorial analyst.
@@ -81,26 +93,24 @@ public class SourceSummaryLlmService {
 				  "themes": [
 				    {
 				      "t": "Theme title (3-6 words)",
-				      "d": "1-2 sentences explaining the evidence in the sources and how it maps to a paid digital product",
-				      "level": "High"
+				      "d": "1-2 sentences explaining the evidence in the sources and how it maps to a paid digital product"
 				    },
 				    {
 				      "t": "Second theme title",
-				      "d": "1-2 sentences explaining the evidence and product fit",
-				      "level": "Medium-high"
+				      "d": "1-2 sentences explaining the evidence and product fit"
 				    },
 				    {
 				      "t": "Third theme title",
-				      "d": "1-2 sentences explaining the evidence and product fit",
-				      "level": "Medium"
+				      "d": "1-2 sentences explaining the evidence and product fit"
 				    }
 				  ],
 				  "verdict": "One sentence naming the clearest paid digital product (guide, workbook, planner, or checklist) to build from these sources",
 				  "audience": "One concise sentence describing who this is for",
 				  "voice": "1-2 sentences describing the author/creator's tone, style, and how they teach"
 				}
-				3. Each theme's "level" MUST be one of: "High", "Medium-high", or "Medium". Provide 3 themes.
+				3. Provide 3 distinct themes grounded in the retrieved passages. Evidence confidence levels will be computed separately from retrieval hit counts.
 				""");
+		sb.append("\nTotal indexed passages across sources: ").append(Math.max(0, totalPassages)).append("\n");
 
 		if (product.getInput() != null && !product.getInput().isBlank()) {
 			sb.append("\nUser's stated subject / input: ").append(product.getInput().trim()).append("\n");
@@ -202,12 +212,14 @@ public class SourceSummaryLlmService {
 				for (JsonNode tNode : themesNode) {
 					String t = textOrDefault(tNode, "t", "Core theme");
 					String d = textOrDefault(tNode, "d", "Supported by passages in the provided sources.");
-					String level = normalizeLevel(textOrDefault(tNode, "level", "High"));
-					themes.add(new ThemeItem(t, d, level));
+					themes.add(new ThemeItem(t, d, null));
 				}
 			}
 			if (themes.isEmpty()) {
-				themes.add(new ThemeItem("Core method", "Primary actionable framework found in the sources.", "High"));
+				themes.add(new ThemeItem(
+						"Core method",
+						"Primary actionable framework found in the sources.",
+						null));
 			}
 			return new GeneratedSourceProfile(niche, transformation, themes, verdict, audience, voice);
 		}
@@ -221,15 +233,36 @@ public class SourceSummaryLlmService {
 		return val.isEmpty() ? fallback : val;
 	}
 
-	private String normalizeLevel(String level) {
-		String lower = level.trim().toLowerCase();
-		if (lower.contains("medium-high") || lower.contains("medium high")) {
-			return "Medium-high";
-		}
-		if (lower.startsWith("med")) {
+	/**
+	 * Maps per-theme RAG retrieval hit count (passages with cosine similarity >= 0.35) to evidence level:
+	 * 0–1 hits -> "Medium"
+	 * 2–3 hits -> "Medium-high"
+	 * 4+ hits -> "High"
+	 */
+	public static String levelFromHits(int hits) {
+		if (hits <= 1) {
 			return "Medium";
 		}
+		if (hits <= 3) {
+			return "Medium-high";
+		}
 		return "High";
+	}
+
+	/**
+	 * Hard-caps evidence levels by total indexed passage count:
+	 * 1–4 passages -> max "Medium"
+	 * 5–19 passages -> max "Medium-high"
+	 * 20+ passages -> "High" allowed
+	 */
+	public static String clampLevel(String normalizedLevel, int totalPassages) {
+		if (totalPassages <= 4) {
+			return "Medium";
+		}
+		if (totalPassages < 20) {
+			return "High".equals(normalizedLevel) ? "Medium-high" : normalizedLevel;
+		}
+		return normalizedLevel;
 	}
 
 	private String stripMarkdownFences(String text) {

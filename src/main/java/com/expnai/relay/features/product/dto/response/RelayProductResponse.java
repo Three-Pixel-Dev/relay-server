@@ -32,6 +32,7 @@ public record RelayProductResponse(
 		PromoteStateDto promote,
 		MetricsDto metrics,
 		BigDecimal spend,
+		String qualityWarning,
 		boolean cancelled,
 		String created,
 		String updated
@@ -66,10 +67,12 @@ public record RelayProductResponse(
 	) {
 	}
 
+	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record ThemeDto(
 			String t,
 			String d,
-			String level
+			String level,
+			Integer hits
 	) {
 	}
 
@@ -77,7 +80,8 @@ public record RelayProductResponse(
 			String status,
 			String note,
 			List<String> progress,
-			Boolean gatePassed
+			Boolean gatePassed,
+			String qualityWarning
 	) {
 	}
 

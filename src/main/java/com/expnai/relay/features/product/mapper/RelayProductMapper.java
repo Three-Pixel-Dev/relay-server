@@ -95,6 +95,7 @@ public class RelayProductMapper {
 				new PromoteStateDto(List.of(), "todo", false),
 				new MetricsDto(0, 0.0, 0, 0),
 				product.getSpend() != null ? product.getSpend() : BigDecimal.ZERO,
+				product.getQualityWarning(),
 				product.isCancelled(),
 				createdAt.toString(),
 				updatedAt.toString());
@@ -154,13 +155,19 @@ public class RelayProductMapper {
 		List<ProductStepDto> steps = new ArrayList<>(TOTAL_BUILD_STEPS);
 		for (int i = 0; i < TOTAL_BUILD_STEPS; i++) {
 			if (i < cur) {
-				steps.add(new ProductStepDto("done", i == 0 ? currentNote : "", null, null));
+				steps.add(new ProductStepDto("done", i == 0 ? currentNote : "", null, null, null));
 			}
 			else if (i == cur) {
-				steps.add(new ProductStepDto(currentStatus, currentNote, currentProgress, null));
+				Boolean gatePassed = "quality_gate".equals(currentStatus) ? Boolean.FALSE : null;
+				steps.add(new ProductStepDto(
+						currentStatus,
+						currentNote,
+						currentProgress,
+						gatePassed,
+						product.getQualityWarning()));
 			}
 			else {
-				steps.add(new ProductStepDto("todo", "", null, null));
+				steps.add(new ProductStepDto("todo", "", null, null, null));
 			}
 		}
 		return steps;

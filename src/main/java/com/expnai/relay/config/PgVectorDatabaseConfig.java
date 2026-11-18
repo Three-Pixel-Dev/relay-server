@@ -71,6 +71,12 @@ public class PgVectorDatabaseConfig {
 				if (columnUdtName(conn, "relay_product", "cancelled") == null) {
 					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS cancelled BOOLEAN NOT NULL DEFAULT false");
 				}
+				if (columnUdtName(conn, "relay_product", "quality_warning") == null) {
+					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS quality_warning TEXT");
+				}
+				if (columnUdtName(conn, "relay_product", "quality_override") == null) {
+					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS quality_override BOOLEAN NOT NULL DEFAULT false");
+				}
 			}
 		}
 		catch (Exception ex) {

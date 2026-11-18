@@ -242,10 +242,12 @@ public class RelayProductServiceImpl implements RelayProductService {
 
 		if (product.getBuildStep() == 0 && product.getStage() == RelayProductStage.BUILD) {
 			sourceProfileRepository.deleteHardByProductId(productId);
+			product.setQualityWarning(null);
+			product.setQualityOverride(false);
 			if (!"running".equals(product.getStepStatus())) {
 				product.setStepStatus("todo");
-				productRepository.save(product);
 			}
+			productRepository.save(product);
 		}
 		return ApiResponse.ok("Source removed", toResponse(product));
 	}
@@ -260,9 +262,12 @@ public class RelayProductServiceImpl implements RelayProductService {
 			return ApiResponse.ok("OK", toResponse(product));
 		}
 
-		// Do not allow proceed to bypass the review gate on step 0
+		// Do not allow proceed to bypass the review or quality_gate on step 0
 		if (product.getBuildStep() == 0 && "review".equals(product.getStepStatus())) {
 			return ApiResponse.ok("Awaiting approval of source summary", toResponse(product));
+		}
+		if (product.getBuildStep() == 0 && "quality_gate".equals(product.getStepStatus())) {
+			return ApiResponse.ok("Awaiting source quality decision", toResponse(product));
 		}
 
 		// Server guard: persist Proceed audit event BEFORE any read or model call
@@ -332,6 +337,49 @@ public class RelayProductServiceImpl implements RelayProductService {
 
 	@Override
 	@Transactional
+	public ApiResponse<RelayProductResponse> continueQualityGate(Long productId) {
+		RelayUser user = requireCurrentUser();
+		RelayProduct product = requireOwnedProduct(productId);
+
+		if (product.getStage() != RelayProductStage.BUILD || product.getBuildStep() != 0) {
+			return ApiResponse.ok("OK", toResponse(product));
+		}
+		if (!"quality_gate".equals(product.getStepStatus())) {
+			return ApiResponse.ok("OK", toResponse(product));
+		}
+
+		final String embedKey = aiCredentialService.requireGeminiEmbeddingKey(user.getId());
+		final String chatKey = aiCredentialService.requireChatModelKey(user.getId());
+
+		recordAudit(user, product, "PRODUCT_QUALITY_CONTINUE", "Continued despite source quality gate on step 0");
+		saveThreadMessage(product, RelayThreadWho.YOU, "Continue anyway.");
+
+		product.setQualityOverride(true);
+		product.setQualityWarning(null);
+		product.setCancelled(false);
+		product.setStepStatus("running");
+		product.setStepProgress("[\"Summarising niche, themes, voice and audience\"]");
+		product = productRepository.saveAndFlush(product);
+
+		final Long pid = product.getId();
+		final Long uid = user.getId();
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCommit() {
+					sourceIngestionWorker.summarizeExistingPassagesAsync(pid, uid, embedKey, chatKey);
+				}
+			});
+		}
+		else {
+			sourceIngestionWorker.summarizeExistingPassagesAsync(pid, uid, embedKey, chatKey);
+		}
+
+		return ApiResponse.ok("Continuing with existing sources", toResponse(product));
+	}
+
+	@Override
+	@Transactional
 	public ApiResponse<RelayProductResponse> approve(Long productId) {
 		RelayUser user = requireCurrentUser();
 		RelayProduct product = requireOwnedProduct(productId);
@@ -371,6 +419,8 @@ public class RelayProductServiceImpl implements RelayProductService {
 		product.setStepNote(text);
 		if (product.getBuildStep() == 0) {
 			sourceProfileRepository.deleteHardByProductId(productId);
+			product.setQualityWarning(null);
+			product.setQualityOverride(false);
 		}
 		product.setStepStatus("todo");
 		product.setStepProgress(null);
@@ -475,12 +525,19 @@ public class RelayProductServiceImpl implements RelayProductService {
 			return;
 		}
 		if (product.getBuildStep() == 0 || (product.getBuildStep() == 1 && product.getChosenPocket() == null)) {
+			String prevStatus = product.getStepStatus();
 			sourceProfileRepository.deleteHardByProductId(product.getId());
 			product.setBuildStep(0);
-			if (!"running".equals(product.getStepStatus())) {
+			product.setQualityWarning(null);
+			product.setQualityOverride(false);
+			if (!"running".equals(prevStatus)) {
 				product.setStepStatus("todo");
 			}
 			productRepository.save(product);
+			if ("quality_gate".equals(prevStatus) || "review".equals(prevStatus)) {
+				saveThreadMessage(product, RelayThreadWho.RELAY,
+						"Sources updated. Press Proceed to re-read.");
+			}
 		}
 	}
 

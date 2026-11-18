@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.expnai.relay.common.persistence.AuditUserContext;
+import com.expnai.relay.domain.entity.RelayPassage;
 import com.expnai.relay.domain.entity.RelayProduct;
 import com.expnai.relay.domain.entity.RelaySource;
 import com.expnai.relay.domain.entity.RelaySourceProfile;
@@ -29,9 +30,11 @@ import com.expnai.relay.domain.repository.RelayThreadMessageRepository;
 import com.expnai.relay.features.ai.GeminiEmbeddingService;
 import com.expnai.relay.features.ai.SourceSummaryLlmService;
 import com.expnai.relay.features.ai.SourceSummaryLlmService.GeneratedSourceProfile;
+import com.expnai.relay.features.ai.SourceSummaryLlmService.ThemeItem;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.ingest.SourceParserService.ParseResult;
 import com.expnai.relay.features.product.ingest.SourceParserService.PassageChunk;
+import com.expnai.relay.features.product.ingest.SourceQualityService.QualityCheckResult;
 import com.expnai.relay.features.product.mapper.RelayProductMapper;
 import com.expnai.relay.features.product.sse.ProductSseHub;
 import com.expnai.relay.features.retrieval.PassageRetrievalService;
@@ -46,6 +49,9 @@ public class SourceIngestionWorker {
 
 	private static final Logger log = LoggerFactory.getLogger(SourceIngestionWorker.class);
 	private static final BigDecimal STEP_0_SPEND = new BigDecimal("0.25");
+	private static final int THEME_RETRIEVAL_TOP_K = 8;
+	private static final double THEME_HIT_MIN_SCORE = 0.35;
+	private static final int THEME_QUERY_MAX_CHARS = 400;
 
 	private final RelayProductRepository productRepository;
 	private final RelaySourceRepository sourceRepository;
@@ -53,6 +59,7 @@ public class SourceIngestionWorker {
 	private final RelaySourceProfileRepository sourceProfileRepository;
 	private final RelayThreadMessageRepository threadMessageRepository;
 	private final SourceParserService sourceParserService;
+	private final SourceQualityService sourceQualityService;
 	private final GeminiEmbeddingService geminiEmbeddingService;
 	private final PassageRetrievalService passageRetrievalService;
 	private final SourceSummaryLlmService sourceSummaryLlmService;
@@ -74,6 +81,49 @@ public class SourceIngestionWorker {
 		catch (Exception ex) {
 			log.error("Unexpected failure in ingestion pipeline for product {}: {}", productId, ex.getMessage(), ex);
 			failStepGracefully(productId, "Source reading encountered an unexpected error: " + ex.getMessage());
+		}
+		finally {
+			AuditUserContext.clear();
+		}
+	}
+
+	@Async("relayIngestionTaskExecutor")
+	public void summarizeExistingPassagesAsync(
+			Long productId,
+			Long userId,
+			String embedApiKey,
+			String chatApiKey) {
+		AuditUserContext.setCurrentUserId(userId);
+		try {
+			List<RelaySource> sources = sourceRepository.findByProductIdOrderByCreatedAtAsc(productId);
+			long totalPassages = passageRepository.countByProductId(productId);
+			if (totalPassages == 0) {
+				failStepGracefully(productId,
+						"No indexed passages found to summarize. Press Proceed to read your sources.");
+				return;
+			}
+			int videosRead = (int) sources.stream()
+					.filter(s -> s.getStatus() == RelaySourceStatus.READY && s.getKind() == RelaySourceKind.YOUTUBE)
+					.count();
+			int docsRead = (int) sources.stream()
+					.filter(s -> s.getStatus() == RelaySourceStatus.READY
+							&& (s.getKind() == RelaySourceKind.FILE || s.getKind() == RelaySourceKind.WEB))
+					.count();
+			List<String> progressLines = new ArrayList<>();
+			summarizeAndSaveProfile(
+					productId,
+					sources,
+					videosRead,
+					docsRead,
+					(int) totalPassages,
+					embedApiKey,
+					chatApiKey,
+					progressLines);
+		}
+		catch (Exception ex) {
+			log.error("Unexpected failure summarizing existing passages for product {}: {}",
+					productId, ex.getMessage(), ex);
+			failStepGracefully(productId, "Source summary encountered an unexpected error: " + ex.getMessage());
 		}
 		finally {
 			AuditUserContext.clear();
@@ -197,6 +247,53 @@ public class SourceIngestionWorker {
 			return;
 		}
 
+		RelayProduct snapshot = productRepository.findById(productId).orElse(null);
+		if (snapshot == null || snapshot.isCancelled()) {
+			return;
+		}
+
+		List<RelayPassage> indexedPassages = passageRepository.findByProductIdOrderByIdAsc(productId);
+		QualityCheckResult quality = sourceQualityService.evaluate(chatApiKey, snapshot, sources, indexedPassages);
+		if (quality.failsGate() && !snapshot.isQualityOverride()) {
+			String threadText = (quality.nonTeachable() && !quality.reasons().isEmpty())
+					? SourceQualityService.CLIENT_QUALITY_WARNING + " " + quality.reasons().get(0)
+					: SourceQualityService.CLIENT_QUALITY_WARNING;
+			transactionTemplate.executeWithoutResult(status -> {
+				RelayProduct product = productRepository.findById(productId).orElse(null);
+				if (product == null) {
+					return;
+				}
+				sourceProfileRepository.deleteHardByProductId(productId);
+				product.setStepProgress(null);
+				product.setStepStatus("quality_gate");
+				product.setQualityWarning(quality.warningMessage());
+				productRepository.save(product);
+				saveThreadMessage(product, RelayThreadWho.RELAY, threadText);
+			});
+			publishTerminalProduct(productId);
+			return;
+		}
+
+		summarizeAndSaveProfile(
+				productId,
+				sources,
+				totalVideosRead,
+				totalDocsRead,
+				(int) totalPassages,
+				embedApiKey,
+				chatApiKey,
+				progressLines);
+	}
+
+	private void summarizeAndSaveProfile(
+			Long productId,
+			List<RelaySource> sources,
+			int totalVideosRead,
+			int totalDocsRead,
+			int totalPassages,
+			String embedApiKey,
+			String chatApiKey,
+			List<String> progressLines) {
 		addProgress(productId, progressLines, "Summarising niche, themes, voice and audience");
 
 		RelayProduct snapshot = productRepository.findById(productId).orElse(null);
@@ -214,11 +311,18 @@ public class SourceIngestionWorker {
 		GeneratedSourceProfile generated = sourceSummaryLlmService.summarizePassages(
 				chatApiKey,
 				snapshot,
-				topPassages);
+				topPassages,
+				totalPassages);
+
+		List<ThemeItem> scoredThemes = scoreThemesFromRetrieval(
+				productId,
+				generated.themes(),
+				totalPassages,
+				embedApiKey);
 
 		final int finalVideos = totalVideosRead;
 		final int finalDocs = totalDocsRead;
-		final int finalPassages = (int) totalPassages;
+		final int finalPassages = totalPassages;
 
 		transactionTemplate.executeWithoutResult(status -> {
 			RelayProduct product = productRepository.findById(productId).orElse(null);
@@ -231,7 +335,7 @@ public class SourceIngestionWorker {
 			profile.setNiche(generated.niche());
 			profile.setTransformation(generated.transformation());
 			try {
-				profile.setThemesJson(objectMapper.writeValueAsString(generated.themes()));
+				profile.setThemesJson(objectMapper.writeValueAsString(scoredThemes));
 			}
 			catch (Exception ex) {
 				profile.setThemesJson("[]");
@@ -248,6 +352,8 @@ public class SourceIngestionWorker {
 				product.setInput(generated.niche());
 			}
 			product.setStepProgress(null);
+			product.setQualityWarning(null);
+			product.setQualityOverride(false);
 			product.setStepStatus("review");
 			BigDecimal currentSpend = product.getSpend() != null ? product.getSpend() : BigDecimal.ZERO;
 			product.setSpend(currentSpend.add(STEP_0_SPEND));
@@ -258,6 +364,54 @@ public class SourceIngestionWorker {
 		});
 
 		publishTerminalProduct(productId);
+	}
+
+	private List<ThemeItem> scoreThemesFromRetrieval(
+			Long productId,
+			List<ThemeItem> rawThemes,
+			int totalPassages,
+			String embedApiKey) {
+		if (rawThemes == null || rawThemes.isEmpty()) {
+			return List.of();
+		}
+		int topK = Math.min(THEME_RETRIEVAL_TOP_K, Math.max(3, totalPassages));
+		double minScore = totalPassages < 20 ? 0.45 : THEME_HIT_MIN_SCORE;
+
+		List<ThemeItem> scored = new ArrayList<>(rawThemes.size());
+		for (ThemeItem theme : rawThemes) {
+			String themeQuery = buildThemeQuery(theme.t(), theme.d());
+			int hits = 0;
+			try {
+				List<RetrievedPassage> matches = passageRetrievalService.retrieveWithApiKey(
+						productId,
+						themeQuery,
+						topK,
+						embedApiKey);
+				hits = (int) matches.stream()
+						.filter(p -> p.score() >= minScore)
+						.count();
+			}
+			catch (Exception ex) {
+				log.warn("Per-theme retrieval scoring failed for product {} theme '{}': {}",
+						productId, theme.t(), ex.getMessage());
+			}
+			String hitLevel = SourceSummaryLlmService.levelFromHits(hits);
+			String clampedLevel = SourceSummaryLlmService.clampLevel(hitLevel, totalPassages);
+			scored.add(new ThemeItem(theme.t(), theme.d(), clampedLevel, hits));
+		}
+		return scored;
+	}
+
+	private String buildThemeQuery(String title, String description) {
+		String t = title != null ? title.trim() : "";
+		String d = description != null ? description.trim() : "";
+		String combined = (t + " " + d).trim();
+		if (combined.isEmpty()) {
+			return "core method theme";
+		}
+		return combined.length() > THEME_QUERY_MAX_CHARS
+				? combined.substring(0, THEME_QUERY_MAX_CHARS)
+				: combined;
 	}
 
 	private String buildSummarySearchQuery(RelayProduct product, List<RelaySource> sources) {

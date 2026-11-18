@@ -74,6 +74,12 @@ public class RelayProduct extends MasterEntity {
 	@Column(name = "step_note", columnDefinition = "text")
 	private String stepNote;
 
+	@Column(name = "quality_warning", columnDefinition = "text")
+	private String qualityWarning;
+
+	@Column(name = "quality_override", nullable = false)
+	private boolean qualityOverride = false;
+
 	@Column(name = "cancelled", nullable = false)
 	private boolean cancelled = false;
 }

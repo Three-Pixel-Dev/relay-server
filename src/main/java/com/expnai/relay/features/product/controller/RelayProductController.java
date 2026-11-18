@@ -106,6 +106,12 @@ public class RelayProductController {
 		return productService.proceed(id);
 	}
 
+	@PostMapping("/{id}/quality/continue")
+	@Operation(summary = "Continue past the source quality gate and summarize existing passages")
+	public ApiResponse<RelayProductResponse> continueQualityGate(@PathVariable Long id) {
+		return productService.continueQualityGate(id);
+	}
+
 	@PostMapping("/{id}/approve")
 	@Operation(summary = "Approve current step result (advances step 0 to step 1)")
 	public ApiResponse<RelayProductResponse> approve(@PathVariable Long id) {

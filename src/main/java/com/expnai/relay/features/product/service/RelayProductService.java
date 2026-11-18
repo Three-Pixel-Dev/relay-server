@@ -29,6 +29,8 @@ public interface RelayProductService {
 
 	ApiResponse<RelayProductResponse> proceed(Long productId);
 
+	ApiResponse<RelayProductResponse> continueQualityGate(Long productId);
+
 	ApiResponse<RelayProductResponse> approve(Long productId);
 
 	ApiResponse<RelayProductResponse> suggest(Long productId, RelaySuggestChangeRequest request);
