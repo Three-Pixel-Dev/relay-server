@@ -109,6 +109,7 @@ public class SourceSummaryLlmService {
 				  "voice": "1-2 sentences describing the author/creator's tone, style, and how they teach"
 				}
 				3. Provide 3 distinct themes grounded in the retrieved passages. Evidence confidence levels will be computed separately from retrieval hit counts.
+				4. For "niche", always describe the teachable subject or topic — NEVER use the uploaded file's filename or a document type label (such as "Invoice", "Receipt", "Statement", or a file name) as the niche. If the sources do not contain a clear teachable topic, return "" for "niche".
 				""");
 		sb.append("\nTotal indexed passages across sources: ").append(Math.max(0, totalPassages)).append("\n");
 
@@ -200,7 +201,7 @@ public class SourceSummaryLlmService {
 	private GeneratedSourceProfile parseResponse(String rawJson) {
 		try {
 			JsonNode node = objectMapper.readTree(rawJson);
-			String niche = textOrDefault(node, "niche", "General digital product");
+			String niche = textOrDefault(node, "niche", "");
 			String transformation = textOrDefault(node, "transformation", "Helps readers apply a clear, repeatable method.");
 			String verdict = textOrDefault(node, "verdict", "A practical step-by-step guide or workbook built from the core material.");
 			String audience = textOrDefault(node, "audience", "Readers looking for a structured, actionable approach.");

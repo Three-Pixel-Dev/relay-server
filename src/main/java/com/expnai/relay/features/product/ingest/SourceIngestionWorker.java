@@ -335,7 +335,7 @@ public class SourceIngestionWorker {
 			sourceProfileRepository.deleteHardByProductId(productId);
 			RelaySourceProfile profile = new RelaySourceProfile();
 			profile.setProduct(product);
-			profile.setNiche(generated.niche());
+			profile.setNiche(sanitizeNiche(generated.niche(), sources));
 			profile.setTransformation(generated.transformation());
 			try {
 				profile.setThemesJson(objectMapper.writeValueAsString(scoredThemes));
@@ -351,9 +351,6 @@ public class SourceIngestionWorker {
 			profile.setPassagesCount(finalPassages);
 			sourceProfileRepository.save(profile);
 
-			if (product.getInput() == null || product.getInput().isBlank()) {
-				product.setInput(generated.niche());
-			}
 			product.setStepProgress(null);
 			product.setQualityWarning(null);
 			product.setQualityOverride(false);
@@ -425,13 +422,44 @@ public class SourceIngestionWorker {
 		if (product.getStepNote() != null && !product.getStepNote().isBlank()) {
 			sb.append(product.getStepNote().trim()).append(' ');
 		}
-		for (RelaySource s : sources) {
-			if (s.getName() != null && !s.getName().isBlank()) {
-				sb.append(s.getName()).append(' ');
-			}
-		}
 		sb.append("core method niche transformation themes audience voice");
 		return sb.toString().trim();
+	}
+
+	private String sanitizeNiche(String rawNiche, List<RelaySource> sources) {
+		if (rawNiche == null || rawNiche.isBlank()) {
+			return "";
+		}
+		String trimmed = rawNiche.trim();
+		String normalized = stripFileExtension(trimmed).toLowerCase(Locale.ROOT);
+		if (normalized.equals("invoice")
+				|| normalized.equals("receipt")
+				|| normalized.equals("statement")
+				|| normalized.equals("billing statement")
+				|| normalized.equals("bank statement")
+				|| normalized.equals("purchase order")
+				|| normalized.equals("document")
+				|| normalized.equals("untitled")
+				|| normalized.equals("untitled product")) {
+			return "";
+		}
+		if (sources != null) {
+			for (RelaySource s : sources) {
+				if (s.getName() != null && !s.getName().isBlank()) {
+					String sourceBase = stripFileExtension(s.getName().trim()).toLowerCase(Locale.ROOT);
+					if (!sourceBase.isEmpty() && (normalized.equals(sourceBase)
+							|| normalized.equals(s.getName().trim().toLowerCase(Locale.ROOT)))) {
+						return "";
+					}
+				}
+			}
+		}
+		return trimmed;
+	}
+
+	private String stripFileExtension(String name) {
+		int dot = name.lastIndexOf('.');
+		return (dot > 0) ? name.substring(0, dot).trim() : name;
 	}
 
 	private String buildSummaryReadyMessage(int videos, int docs, int passages) {
