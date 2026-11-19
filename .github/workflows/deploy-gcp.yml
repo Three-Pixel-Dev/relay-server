@@ -102,11 +102,23 @@ jobs:
           fi
           ./stop-jar.sh || true
           ./run-jar.sh
-          sleep 8
-          curl -fsS "http://127.0.0.1:\${SERVER_PORT:-8080}/actuator/health" || {
-            echo "Health check failed — last log lines:"
-            tail -n 80 logs/application.log || true
+          # Spring Boot cold start is often 20–30s on this VM; wait with retries.
+          PORT="\${SERVER_PORT:-8080}"
+          ok=0
+          for i in \$(seq 1 36); do
+            if curl -fsS "http://127.0.0.1:\${PORT}/actuator/health" >/dev/null 2>&1; then
+              echo "Health check OK after \${i} attempt(s)."
+              curl -fsS "http://127.0.0.1:\${PORT}/actuator/health"
+              echo
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "\$ok" -ne 1 ]; then
+            echo "Health check failed after ~3 minutes — last log lines:"
+            tail -n 120 logs/application.log || true
             exit 1
-          }
+          fi
           echo "Deploy finished."
           EOF
