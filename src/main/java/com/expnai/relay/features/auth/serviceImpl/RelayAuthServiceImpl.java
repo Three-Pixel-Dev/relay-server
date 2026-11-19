@@ -38,6 +38,7 @@ import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
 import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
+import com.expnai.relay.features.auth.dto.request.RelaySetPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
 import com.expnai.relay.features.auth.dto.request.RelayUpdateProfileRequest;
 import com.expnai.relay.features.auth.dto.response.RelayAuthMessageResponse;
@@ -234,6 +235,26 @@ public class RelayAuthServiceImpl implements RelayAuthService {
 		userRepository.save(user);
 		RelaySubscription subscription = currentSubscription(user.getId());
 		return ApiResponse.ok("Profile saved", authMapper.toMe(user, principal.getSessionId(), subscription));
+	}
+
+	@Override
+	@Transactional
+	public ApiResponse<RelayMeResponse> setPassword(RelaySetPasswordRequest request) {
+		RelayUserPrincipal principal = currentPrincipal();
+		RelayUser user = requireUser(principal.getEmail());
+		boolean hasPassword = user.getPasswordHash() != null && !user.getPasswordHash().isBlank();
+		if (hasPassword) {
+			String current = request.getCurrentPassword();
+			if (current == null || current.isBlank()
+					|| !passwordEncoder.matches(current, user.getPasswordHash())) {
+				throw new BusinessRuleException("Current password is incorrect.");
+			}
+		}
+		user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+		userRepository.save(user);
+		RelaySubscription subscription = currentSubscription(user.getId());
+		String message = hasPassword ? "Password updated" : "Password set — you can sign in with email too";
+		return ApiResponse.ok(message, authMapper.toMe(user, principal.getSessionId(), subscription));
 	}
 
 	@Override
