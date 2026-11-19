@@ -17,4 +17,6 @@ public interface RelaySubscriptionRepository extends BaseRepository<RelaySubscri
 			List<RelaySubscriptionStatus> statuses);
 
 	List<RelaySubscription> findByUserIdOrderByCreatedAtDesc(Long userId);
+
+	Optional<RelaySubscription> findFirstByStripeSubscriptionId(String stripeSubscriptionId);
 }
