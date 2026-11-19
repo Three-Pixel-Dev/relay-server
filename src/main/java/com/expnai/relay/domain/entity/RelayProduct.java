@@ -37,6 +37,9 @@ public class RelayProduct extends MasterEntity {
 	@JoinColumn(name = "chosen_pocket_id")
 	private RelayPocket chosenPocket;
 
+	@Column(name = "name", length = 255)
+	private String name;
+
 	@Column(name = "input", columnDefinition = "text")
 	private String input;
 

@@ -65,6 +65,9 @@ public class PgVectorDatabaseConfig {
 			}
 
 			if (tableExists(conn, "relay_product")) {
+				if (columnUdtName(conn, "relay_product", "name") == null) {
+					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS name VARCHAR(255)");
+				}
 				if (columnUdtName(conn, "relay_product", "step_status") == null) {
 					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS step_status VARCHAR(20) NOT NULL DEFAULT 'todo'");
 				}

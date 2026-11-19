@@ -8,6 +8,7 @@ import lombok.Setter;
 @Getter
 @Setter
 public class RelayCreateProductRequest {
+	private String name;
 	private String input;
 	private String mode;
 	private Boolean forElse;

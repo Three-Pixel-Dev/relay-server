@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
 import com.expnai.relay.common.exception.ResourceNotFoundException;
+import com.expnai.relay.common.security.CredentialEncryptionService;
 import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.domain.entity.RelayServiceConnection;
 import com.expnai.relay.domain.entity.RelaySubscription;
@@ -45,6 +46,7 @@ public class RelayWorkspaceController {
 	private final RelayUserRepository userRepository;
 	private final RelaySubscriptionRepository subscriptionRepository;
 	private final RelayServiceConnectionRepository serviceConnectionRepository;
+	private final CredentialEncryptionService credentialEncryptionService;
 
 	@GetMapping
 	@Transactional(readOnly = true)
@@ -110,7 +112,7 @@ public class RelayWorkspaceController {
 				throw new BusinessRuleException(
 						"Text model requires a Google Gemini API key (starts with AIza…) for Gemini embeddings and source summary, not an OpenAI sk-… key.");
 			}
-			conn.setEncryptedCredential(trimmed);
+			conn.setEncryptedCredential(credentialEncryptionService.encrypt(trimmed));
 		}
 		serviceConnectionRepository.save(conn);
 

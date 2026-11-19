@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public record RelayProductResponse(
 		String id,
+		String name,
 		String input,
 		String mode,
 		boolean forElse,

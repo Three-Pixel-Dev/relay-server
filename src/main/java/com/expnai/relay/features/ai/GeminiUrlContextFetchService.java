@@ -26,7 +26,7 @@ import com.google.genai.types.UrlRetrievalStatus;
 public class GeminiUrlContextFetchService {
 
 	private static final Logger log = LoggerFactory.getLogger(GeminiUrlContextFetchService.class);
-	private static final String GEMINI_URL_CONTEXT_MODEL = "gemini-2.5-flash";
+	private static final String GEMINI_URL_CONTEXT_MODEL = "gemini-3.8-flash";
 	private static final String UNREADABLE_PREFIX = "UNREADABLE_URL:";
 	private static final int MIN_EXTRACTED_CHARS = 40;
 

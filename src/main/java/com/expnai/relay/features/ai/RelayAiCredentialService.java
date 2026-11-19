@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
+import com.expnai.relay.common.security.CredentialEncryptionService;
 import com.expnai.relay.domain.entity.RelayServiceConnection;
 import com.expnai.relay.domain.enums.RelayServiceStatus;
 import com.expnai.relay.domain.repository.RelayServiceConnectionRepository;
@@ -20,6 +21,7 @@ public class RelayAiCredentialService {
 	private static final List<String> GEMINI_SERVICE_IDS = List.of("gemini", "google", "google-ai", "llm");
 
 	private final RelayServiceConnectionRepository serviceConnectionRepository;
+	private final CredentialEncryptionService credentialEncryptionService;
 
 	@Value("${GEMINI_API_KEY:${GOOGLE_API_KEY:}}")
 	private String fallbackGeminiKey;
@@ -41,8 +43,14 @@ public class RelayAiCredentialService {
 							serviceId,
 							RelayServiceStatus.CONNECTED);
 			if (conn.isPresent()) {
-				String key = trimToNull(conn.get().getEncryptedCredential());
+				RelayServiceConnection connection = conn.get();
+				String rawStored = connection.getEncryptedCredential();
+				String key = trimToNull(credentialEncryptionService.decrypt(rawStored));
 				if (key != null) {
+					if (rawStored != null && !rawStored.startsWith("enc:v1:")) {
+						connection.setEncryptedCredential(credentialEncryptionService.encrypt(key));
+						serviceConnectionRepository.save(connection);
+					}
 					if (key.startsWith("sk-")) {
 						sawOpenAiKey = true;
 						continue;

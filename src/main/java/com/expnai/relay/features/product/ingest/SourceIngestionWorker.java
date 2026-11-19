@@ -416,6 +416,9 @@ public class SourceIngestionWorker {
 
 	private String buildSummarySearchQuery(RelayProduct product, List<RelaySource> sources) {
 		StringBuilder sb = new StringBuilder();
+		if (product.getName() != null && !product.getName().isBlank()) {
+			sb.append(product.getName().trim()).append(' ');
+		}
 		if (product.getInput() != null && !product.getInput().isBlank()) {
 			sb.append(product.getInput().trim()).append(' ');
 		}

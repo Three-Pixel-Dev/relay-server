@@ -72,6 +72,7 @@ public class RelayProductMapper {
 
 		return new RelayProductResponse(
 				String.valueOf(product.getId()),
+				product.getName() != null ? product.getName() : "",
 				product.getInput() != null ? product.getInput() : "",
 				mode,
 				product.isForElse(),

@@ -102,6 +102,10 @@ public class RelayProductServiceImpl implements RelayProductService {
 	public ApiResponse<RelayProductResponse> createProduct(RelayCreateProductRequest request) {
 		RelayUser user = requireCurrentUser();
 
+		String name = request != null && request.getName() != null ? request.getName().trim() : "";
+		if (name.isEmpty()) {
+			throw new BusinessRuleException("Product name is required.");
+		}
 		String input = request != null && request.getInput() != null ? request.getInput().trim() : "";
 		RelayBuildMode mode = parseBuildMode(request != null ? request.getMode() : null);
 		boolean forElse = request != null && Boolean.TRUE.equals(request.getForElse());
@@ -112,6 +116,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 
 		RelayProduct product = new RelayProduct();
 		product.setUser(user);
+		product.setName(name);
 		product.setInput(input);
 		product.setMode(mode);
 		product.setForElse(forElse);
@@ -133,19 +138,20 @@ public class RelayProductServiceImpl implements RelayProductService {
 		}
 
 		int totalSources = createdSources.size() + pendingFiles;
+		String displaySubject = !input.isEmpty() ? input : name;
 		if (totalSources > 0) {
 			product.setBuildStep(0);
 			product.setStepStatus("todo");
 			String greeting = "Got it"
-					+ (!input.isEmpty() ? ": **" + input + "**" : "")
+					+ (!displaySubject.isEmpty() ? ": **" + displaySubject + "**" : "")
 					+ ". " + totalSources + " source" + (totalSources > 1 ? "s" : "") + " to read first"
 					+ (!clientName.isEmpty() ? " for " + clientName : "")
 					+ ". I read them, index every passage so the product can cite it, and show you what I found before anything is written. About $0.25 in AI.";
 			saveThreadMessage(product, RelayThreadWho.RELAY, greeting);
 		}
 		else {
-			String greeting = !input.isEmpty()
-					? "Got it: **" + input + "**. Let me find where that is worth money. I read what people search for, what already sells, what reviews complain about, and come back with four profitable pockets."
+			String greeting = !displaySubject.isEmpty()
+					? "Got it: **" + displaySubject + "**. Let me find where that is worth money. I read what people search for, what already sells, what reviews complain about, and come back with four profitable pockets."
 					: "No input is fine. I’ll propose pockets from what sells this month.";
 			saveThreadMessage(product, RelayThreadWho.RELAY, greeting);
 			product.setBuildStep(1);

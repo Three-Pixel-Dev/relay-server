@@ -31,7 +31,7 @@ import lombok.RequiredArgsConstructor;
 public class ContentTeachabilityClassifier {
 
 	private static final Logger log = LoggerFactory.getLogger(ContentTeachabilityClassifier.class);
-	private static final String GEMINI_CLASSIFIER_MODEL = "gemini-2.5-flash";
+	private static final String GEMINI_CLASSIFIER_MODEL = "gemini-3.8-flash";
 	private static final String OPENAI_CLASSIFIER_MODEL = "gpt-4o-mini";
 	private static final int SAMPLE_CHAR_LIMIT = 10_000;
 	private static final double MIN_BLOCKING_CONFIDENCE = 0.6;
@@ -93,6 +93,9 @@ public class ContentTeachabilityClassifier {
 				}
 				""");
 
+		if (product != null && product.getName() != null && !product.getName().isBlank()) {
+			sb.append("\nProduct name: ").append(product.getName().trim()).append("\n");
+		}
 		if (product != null && product.getInput() != null && !product.getInput().isBlank()) {
 			sb.append("\nUser's stated subject / input: ").append(product.getInput().trim()).append("\n");
 		}

@@ -31,7 +31,7 @@ import lombok.RequiredArgsConstructor;
 public class SourceSummaryLlmService {
 
 	private static final Logger log = LoggerFactory.getLogger(SourceSummaryLlmService.class);
-	private static final String GEMINI_SUMMARY_MODEL = "gemini-2.5-flash";
+	private static final String GEMINI_SUMMARY_MODEL = "gemini-3.8-flash";
 	private static final String OPENAI_SUMMARY_MODEL = "gpt-4o-mini";
 
 	private final ObjectMapper objectMapper;
@@ -113,6 +113,9 @@ public class SourceSummaryLlmService {
 				""");
 		sb.append("\nTotal indexed passages across sources: ").append(Math.max(0, totalPassages)).append("\n");
 
+		if (product.getName() != null && !product.getName().isBlank()) {
+			sb.append("\nProduct name: ").append(product.getName().trim()).append("\n");
+		}
 		if (product.getInput() != null && !product.getInput().isBlank()) {
 			sb.append("\nUser's stated subject / input: ").append(product.getInput().trim()).append("\n");
 		}

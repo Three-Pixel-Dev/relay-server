@@ -7,6 +7,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 -- 1. relay_product step state columns
 ALTER TABLE IF EXISTS relay_product
+    ADD COLUMN IF NOT EXISTS name VARCHAR(255),
     ADD COLUMN IF NOT EXISTS step_status VARCHAR(20) NOT NULL DEFAULT 'todo',
     ADD COLUMN IF NOT EXISTS step_progress JSONB,
     ADD COLUMN IF NOT EXISTS step_note TEXT,
