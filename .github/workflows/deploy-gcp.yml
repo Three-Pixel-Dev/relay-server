@@ -1,0 +1,112 @@
+name: Deploy to GCP VM
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - production
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-gcp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Build JAR & deploy over SSH
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Make Maven wrapper executable
+        run: chmod +x ./mvnw
+
+      - name: Build JAR
+        run: |
+          ./mvnw -B -DskipTests clean package
+          cp target/relay-0.0.1-SNAPSHOT.jar relay.jar
+
+      - name: Deploy via SSH
+        env:
+          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
+          GCP_VM_USER: ${{ secrets.GCP_VM_USER }}
+          GCP_VM_PORT: ${{ secrets.GCP_VM_PORT }}
+          GCP_VM_SSH_KEY: ${{ secrets.GCP_VM_SSH_KEY }}
+          GCP_VM_DEPLOY_DIR: ${{ secrets.GCP_VM_DEPLOY_DIR }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GCP_VM_HOST:-}" ] || [ -z "${GCP_VM_SSH_KEY:-}" ]; then
+            echo "Missing required secrets: GCP_VM_HOST and GCP_VM_SSH_KEY"
+            exit 1
+          fi
+
+          USER="${GCP_VM_USER:-ubuntu}"
+          PORT="${GCP_VM_PORT:-22}"
+          DEPLOY_DIR="${GCP_VM_DEPLOY_DIR:-/opt/relay}"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # Secrets often arrive with CRLF or literal \n — normalize before ssh-keygen.
+          printf '%s\n' "$GCP_VM_SSH_KEY" | tr -d '\r' | sed 's/\\n/\n/g' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          if ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null 2>&1; then
+            KEY_FILE=~/.ssh/id_ed25519
+          else
+            mv ~/.ssh/id_ed25519 ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+            if ! ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null 2>&1; then
+              echo "GCP_VM_SSH_KEY is not a valid private key. Paste the full OPENSSH/RSA private key (not the .pub file)."
+              exit 1
+            fi
+            KEY_FILE=~/.ssh/id_rsa
+          fi
+          ssh-keyscan -p "$PORT" -H "$GCP_VM_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          SSH_OPTS=(-i "$KEY_FILE" -p "$PORT" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          SCP_OPTS=(-i "$KEY_FILE" -P "$PORT" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          SSH_TARGET="${USER}@${GCP_VM_HOST}"
+
+          echo "Deploy dir: ${DEPLOY_DIR}"
+          echo "Host: ${GCP_VM_HOST}"
+
+          ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "mkdir -p $(printf '%q' "$DEPLOY_DIR")/logs $(printf '%q' "$DEPLOY_DIR")/storage"
+
+          # Ensure .env exists on the VM (created once by operator — never overwrite from CI)
+          ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "test -f $(printf '%q' "$DEPLOY_DIR")/.env" \
+            || { echo "ERROR: ${DEPLOY_DIR}/.env missing on VM. Create it before deploy (see docs/deploy-gcp.md)."; exit 1; }
+
+          scp "${SCP_OPTS[@]}" \
+            relay.jar \
+            run-jar.sh \
+            stop-jar.sh \
+            docker-compose.yml \
+            "${SSH_TARGET}:${DEPLOY_DIR}/"
+
+          ssh "${SSH_OPTS[@]}" "$SSH_TARGET" bash -s <<EOF
+          set -euo pipefail
+          cd $(printf '%q' "$DEPLOY_DIR")
+          chmod +x run-jar.sh stop-jar.sh
+          # Optional Playwright sidecar (safe if Docker is installed)
+          if command -v docker >/dev/null 2>&1; then
+            docker compose up -d --remove-orphans || true
+          fi
+          ./stop-jar.sh || true
+          ./run-jar.sh
+          sleep 8
+          curl -fsS "http://127.0.0.1:\${SERVER_PORT:-8080}/actuator/health" || {
+            echo "Health check failed — last log lines:"
+            tail -n 80 logs/application.log || true
+            exit 1
+          }
+          echo "Deploy finished."
+          EOF

@@ -46,6 +46,11 @@ Export those variables in your shell or IDE run configuration before starting (S
 
 Schema is managed with `spring.jpa.hibernate.ddl-auto=update`.
 
+## Deploy (GCP VM)
+
+See [docs/deploy-gcp.md](docs/deploy-gcp.md) for JAR + GitHub Actions SSH deploy (Tobu-style).  
+VM example: `35.185.177.9` — put the SSH **private** key in GitHub secret `GCP_VM_SSH_KEY`, never in chat.
+
 ## Run
 
 ```bash
