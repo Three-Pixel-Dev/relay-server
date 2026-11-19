@@ -1,0 +1,19 @@
+# Optional sidecars on the GCP VM (API JAR runs on the host via ./run-jar.sh).
+#
+# Playwright for WEB source scraping (matches .env.example Option A):
+#   docker compose up -d
+#   RELAY_WEB_PLAYWRIGHT_WS_ENDPOINT=ws://127.0.0.1:3000/
+
+services:
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.49.0-jammy
+    container_name: relay-playwright
+    restart: unless-stopped
+    command:
+      [
+        "/bin/bash",
+        "-c",
+        "npx -y playwright@1.49.0 run-server --port 3000 --host 0.0.0.0",
+      ]
+    ports:
+      - "3000:3000"
