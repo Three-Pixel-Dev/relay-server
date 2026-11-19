@@ -26,6 +26,7 @@ public class RelayAuthMapper implements BaseMapper<RelayUser, RelayMeResponse> {
 					subscription.getCurrentPeriodEnd(),
 					subscription.isCancelAtPeriodEnd());
 		}
+		boolean hasPassword = user.getPasswordHash() != null && !user.getPasswordHash().isBlank();
 		return new RelayMeResponse(
 				user.getId(),
 				user.getEmail(),
@@ -33,6 +34,7 @@ public class RelayAuthMapper implements BaseMapper<RelayUser, RelayMeResponse> {
 				user.getRole().name(),
 				user.isOnboardSeen(),
 				user.getGoogleId() != null && !user.getGoogleId().isBlank(),
+				hasPassword,
 				user.getAvatarUrl(),
 				currentSessionId,
 				user.getCreatedAt(),

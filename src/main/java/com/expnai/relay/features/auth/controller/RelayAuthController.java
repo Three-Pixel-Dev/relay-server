@@ -16,6 +16,7 @@ import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
 import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
+import com.expnai.relay.features.auth.dto.request.RelaySetPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
 import com.expnai.relay.features.auth.dto.request.RelayUpdateProfileRequest;
 import com.expnai.relay.features.auth.dto.response.RelayAuthMessageResponse;
@@ -80,6 +81,12 @@ public class RelayAuthController {
 	@Operation(summary = "Update profile name")
 	public ApiResponse<RelayMeResponse> updateProfile(@Valid @RequestBody RelayUpdateProfileRequest request) {
 		return authService.updateProfile(request);
+	}
+
+	@PutMapping("/password")
+	@Operation(summary = "Set or change password (Google users can set one here)")
+	public ApiResponse<RelayMeResponse> setPassword(@Valid @RequestBody RelaySetPasswordRequest request) {
+		return authService.setPassword(request);
 	}
 
 	@GetMapping("/sessions")

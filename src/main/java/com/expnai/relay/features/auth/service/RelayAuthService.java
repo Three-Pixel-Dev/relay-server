@@ -7,6 +7,7 @@ import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
 import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
+import com.expnai.relay.features.auth.dto.request.RelaySetPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
 import com.expnai.relay.features.auth.dto.request.RelayUpdateProfileRequest;
 import com.expnai.relay.features.auth.dto.response.RelayAuthMessageResponse;
@@ -27,6 +28,8 @@ public interface RelayAuthService {
 	ApiResponse<RelayMeResponse> me();
 
 	ApiResponse<RelayMeResponse> updateProfile(RelayUpdateProfileRequest request);
+
+	ApiResponse<RelayMeResponse> setPassword(RelaySetPasswordRequest request);
 
 	ApiResponse<List<RelaySessionResponse>> listSessions();
 

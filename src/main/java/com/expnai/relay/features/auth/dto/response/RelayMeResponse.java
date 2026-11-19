@@ -9,6 +9,7 @@ public record RelayMeResponse(
 		String role,
 		boolean onboardSeen,
 		boolean googleLinked,
+		boolean hasPassword,
 		String avatarUrl,
 		Long currentSessionId,
 		Instant createdAt,
