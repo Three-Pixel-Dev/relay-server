@@ -481,7 +481,8 @@ public class SourceIngestionWorker {
 		}
 		String formattedPassages = NumberFormat.getIntegerInstance(Locale.US).format(passages);
 		return "Read " + readPart + "; " + formattedPassages
-				+ " passages indexed. Here is what the sources say. If it matches, I use it to find the pockets and to write in this voice. Uploaded documents take priority over what I infer.";
+				+ (passages == 1 ? " passage" : " passages")
+				+ " indexed. Here is what the sources say. If it matches, I use it to find the pockets and to write in this voice. Uploaded documents take priority over what I infer.";
 	}
 
 	private boolean isProductCancelled(Long productId) {
