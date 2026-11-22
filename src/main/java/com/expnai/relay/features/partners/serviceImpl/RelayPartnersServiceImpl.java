@@ -21,6 +21,7 @@ import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
 import com.expnai.relay.common.exception.ResourceNotFoundException;
 import com.expnai.relay.common.web.ApiResponse;
+import com.expnai.relay.domain.entity.RelayGmailMailbox;
 import com.expnai.relay.domain.entity.RelayOutreachMessage;
 import com.expnai.relay.domain.entity.RelayOutreachTemplate;
 import com.expnai.relay.domain.entity.RelayPartnership;
@@ -32,6 +33,7 @@ import com.expnai.relay.domain.entity.RelaySubscription;
 import com.expnai.relay.domain.entity.RelayThreadMessage;
 import com.expnai.relay.domain.entity.RelayUser;
 import com.expnai.relay.domain.enums.RelayBuildMode;
+import com.expnai.relay.domain.enums.RelayGmailMailboxStatus;
 import com.expnai.relay.domain.enums.RelayProductStage;
 import com.expnai.relay.domain.enums.RelayProspectOrigin;
 import com.expnai.relay.domain.enums.RelayProspectStatus;
@@ -40,6 +42,7 @@ import com.expnai.relay.domain.enums.RelaySourceKind;
 import com.expnai.relay.domain.enums.RelaySourceStatus;
 import com.expnai.relay.domain.enums.RelaySubscriptionStatus;
 import com.expnai.relay.domain.enums.RelayThreadWho;
+import com.expnai.relay.domain.repository.RelayGmailMailboxRepository;
 import com.expnai.relay.domain.repository.RelayOutreachMessageRepository;
 import com.expnai.relay.domain.repository.RelayOutreachTemplateRepository;
 import com.expnai.relay.domain.repository.RelayPartnershipRepository;
@@ -51,6 +54,7 @@ import com.expnai.relay.domain.repository.RelaySubscriptionRepository;
 import com.expnai.relay.domain.repository.RelaySuppressionRepository;
 import com.expnai.relay.domain.repository.RelayThreadMessageRepository;
 import com.expnai.relay.domain.repository.RelayUserRepository;
+import com.expnai.relay.features.gmail.service.GmailSendService;
 import com.expnai.relay.features.auth.security.RelayUserPrincipal;
 import com.expnai.relay.features.partners.dto.request.RelayAddFromScoutRequest;
 import com.expnai.relay.features.partners.dto.request.RelayBuildForPartnerRequest;
@@ -101,6 +105,8 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 	private final RelayProductMapper productMapper;
 	private final RelayScoutCatalog scoutCatalog;
 	private final RelayOutreachMailService mailService;
+	private final RelayGmailMailboxRepository gmailMailboxRepository;
+	private final GmailSendService gmailSendService;
 
 	@Override
 	@Transactional(readOnly = true)
@@ -266,9 +272,11 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 	public ApiResponse<RelaySendOutreachResponse> sendOutreach() {
 		RelayUser user = requireCurrentUser();
 		requireActiveSubscription(user);
-		if (!mailService.isConfigured()) {
+		RelayGmailMailbox gmailMailbox = firstConnectedGmail(user);
+		boolean useGmail = gmailMailbox != null;
+		if (!useGmail && !mailService.isConfigured()) {
 			throw new BusinessRuleException(
-					"Mailbox SMTP is not configured. Set SPRING_MAIL_USERNAME and SPRING_MAIL_PASSWORD.");
+					"Connect a Gmail mailbox or set SPRING_MAIL_USERNAME / SPRING_MAIL_PASSWORD.");
 		}
 
 		RelayOutreachTemplate template = requireTemplate(user);
@@ -312,17 +320,32 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 
 			String subject = partnersMapper.fillTemplate(outreach.subject(), prospect, outreach.split(), displayName);
 			String body = partnersMapper.fillTemplate(outreach.body(), prospect, outreach.split(), displayName);
-			mailService.send(email, subject, body);
-
-			Instant now = Instant.now();
-			RelayOutreachMessage message = new RelayOutreachMessage();
-			message.setProspect(prospect);
-			message.setStep(1);
-			message.setSentAt(now);
-			message.setSubject(subject);
-			message.setBody(body);
-			message.setProviderId("smtp");
-			outreachMessageRepository.save(message);
+			String idem = "init-" + prospect.getId() + "-1";
+			if (useGmail) {
+				RelayOutreachMessage message = gmailSendService.sendInitial(
+						gmailMailbox, prospect, subject, body, idem);
+				gmailSendService.scheduleFollowUps(
+						prospect,
+						gmailMailbox,
+						partnersMapper.fillTemplate(outreach.f1(), prospect, outreach.split(), displayName),
+						partnersMapper.fillTemplate(outreach.f2(), prospect, outreach.split(), displayName));
+				if (message.getSentAt() == null) {
+					continue;
+				}
+			}
+			else {
+				mailService.send(email, subject, body);
+				RelayOutreachMessage message = new RelayOutreachMessage();
+				message.setProspect(prospect);
+				message.setStep(1);
+				message.setSentAt(Instant.now());
+				message.setSubject(subject);
+				message.setBody(body);
+				message.setProviderId("smtp");
+				message.setSendStatus("SENT");
+				message.setIdempotencyKey(idem);
+				outreachMessageRepository.save(message);
+			}
 
 			prospect.setStatus(RelayProspectStatus.SENT);
 			prospect.setOutreachStep(1);
@@ -482,11 +505,25 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 
 	private RelayPartnersOverviewResponse buildOverview(RelayUser user) {
 		RelayOutreachTemplate template = requireTemplate(user);
+		RelayGmailMailbox gmail = firstConnectedGmail(user);
+		boolean mailConfigured = gmail != null || mailService.isConfigured();
+		String mailFrom = gmail != null
+				? gmail.getEmail()
+				: (mailService.isConfigured() ? mailService.fromAddress() : "");
 		return new RelayPartnersOverviewResponse(
 				listPartners(user),
 				partnersMapper.toOutreachResponse(template),
-				mailService.isConfigured(),
-				mailService.isConfigured() ? mailService.fromAddress() : "");
+				mailConfigured,
+				mailFrom,
+				gmail != null,
+				gmail != null ? gmail.getEmail() : "");
+	}
+
+	private RelayGmailMailbox firstConnectedGmail(RelayUser user) {
+		return gmailMailboxRepository.findByUserIdOrderByCreatedAtAsc(user.getId()).stream()
+				.filter(m -> m.getStatus() == RelayGmailMailboxStatus.CONNECTED)
+				.findFirst()
+				.orElse(null);
 	}
 
 	private List<RelayPartnerResponse> listPartners(RelayUser user) {

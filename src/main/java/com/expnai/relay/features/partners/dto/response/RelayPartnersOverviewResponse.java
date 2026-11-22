@@ -6,6 +6,8 @@ public record RelayPartnersOverviewResponse(
 		List<RelayPartnerResponse> partners,
 		RelayOutreachTemplateResponse outreach,
 		boolean mailConfigured,
-		String mailFrom
+		String mailFrom,
+		boolean gmailConnected,
+		String gmailEmail
 ) {
 }

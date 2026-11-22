@@ -1,6 +1,7 @@
 package com.expnai.relay.domain.repository;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,6 +18,45 @@ public interface RelayOutreachMessageRepository extends BaseRepository<RelayOutr
 	List<RelayOutreachMessage> findByProspectIdOrderByStepAsc(Long prospectId);
 
 	Optional<RelayOutreachMessage> findFirstByProspectIdOrderBySentAtDesc(Long prospectId);
+
+	Optional<RelayOutreachMessage> findByIdempotencyKey(String idempotencyKey);
+
+	List<RelayOutreachMessage> findByMailboxIdAndGmailThreadId(Long mailboxId, String gmailThreadId);
+
+	List<RelayOutreachMessage> findByMailboxIdAndGmailThreadIdIn(Long mailboxId, Collection<String> threadIds);
+
+	@Query("""
+			select m from RelayOutreachMessage m
+			where m.mailbox.id = :mailboxId
+			  and m.gmailThreadId is not null
+			  and m.sendStatus = 'SENT'
+			  and m.prospect.status in (
+			      com.expnai.relay.domain.enums.RelayProspectStatus.SENT,
+			      com.expnai.relay.domain.enums.RelayProspectStatus.REPLIED
+			  )
+			""")
+	List<RelayOutreachMessage> findActiveThreadsForMailbox(@Param("mailboxId") Long mailboxId);
+
+	@Query("""
+			select m from RelayOutreachMessage m
+			join fetch m.prospect p
+			join fetch p.user
+			left join fetch m.mailbox
+			where m.sendStatus = 'PENDING'
+			  and m.scheduledAt is not null
+			  and m.scheduledAt <= :now
+			  and m.cancelledAt is null
+			order by m.scheduledAt asc
+			""")
+	List<RelayOutreachMessage> findDueFollowUps(@Param("now") Instant now);
+
+	@Query("""
+			select m from RelayOutreachMessage m
+			where m.prospect.id = :prospectId
+			  and m.sendStatus = 'PENDING'
+			  and m.cancelledAt is null
+			""")
+	List<RelayOutreachMessage> findPendingFollowUpsForProspect(@Param("prospectId") Long prospectId);
 
 	@Query("""
 			select count(m) from RelayOutreachMessage m
