@@ -82,13 +82,6 @@ import lombok.RequiredArgsConstructor;
 public class RelayPartnersServiceImpl implements RelayPartnersService {
 
 	private static final Pattern EMAIL_PATTERN = Pattern.compile("[^\\s,]+@[^\\s,]+\\.[^\\s,]+");
-	private static final List<String> DEMO_INTERESTED = List.of(
-			"Hey! Funny timing, I’ve been meaning to make something for my list for a year. Send the outline over.",
-			"Yes, send it. What would the split look like after fees?",
-			"Interested. Can you show me one you’ve already built?");
-	private static final List<String> DEMO_DECLINED = List.of(
-			"Thanks, but I’m working on my own course right now.",
-			"Not for me at the moment, appreciate you asking.");
 
 	private final RelayUserRepository userRepository;
 	private final RelaySubscriptionRepository subscriptionRepository;
@@ -302,7 +295,7 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 
 		int sent = 0;
 		int skippedSuppressed = 0;
-		List<RelayProspect> sentBatch = new ArrayList<>();
+		int skippedUndeliverable = 0;
 		String displayName = StringUtils.hasText(user.getName()) ? user.getName() : "You";
 
 		for (RelayProspect prospect : queued) {
@@ -315,6 +308,10 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 			}
 			if (suppressionRepository.existsByUserIdAndEmailIgnoreCase(user.getId(), email)) {
 				skippedSuppressed++;
+				continue;
+			}
+			if (isUndeliverableAddress(email)) {
+				skippedUndeliverable++;
 				continue;
 			}
 
@@ -350,33 +347,7 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 			prospect.setStatus(RelayProspectStatus.SENT);
 			prospect.setOutreachStep(1);
 			prospectRepository.save(prospect);
-			sentBatch.add(prospect);
 			sent++;
-		}
-
-		// Demo-parity synthetic replies for *.example addresses (scout pool / invented creators).
-		int demoIndex = 0;
-		for (RelayProspect prospect : sentBatch) {
-			if (prospect.getEmail() == null || !prospect.getEmail().toLowerCase(Locale.ROOT).endsWith(".example")) {
-				continue;
-			}
-			boolean interested = demoIndex % 3 == 0;
-			boolean declined = demoIndex % 3 == 2 && demoIndex % 2 == 0;
-			demoIndex++;
-			if (!interested && !declined) {
-				continue;
-			}
-			String replyText = interested
-					? DEMO_INTERESTED.get(demoIndex % DEMO_INTERESTED.size())
-					: DEMO_DECLINED.get(demoIndex % DEMO_DECLINED.size());
-			RelayReply reply = new RelayReply();
-			reply.setProspect(prospect);
-			reply.setText(replyText);
-			reply.setLabel(interested ? RelayReplyLabel.INTERESTED : RelayReplyLabel.DECLINED);
-			reply.setCorrected(false);
-			replyRepository.save(reply);
-			prospect.setStatus(interested ? RelayProspectStatus.INTERESTED : RelayProspectStatus.DECLINED);
-			prospectRepository.save(prospect);
 		}
 
 		long remainingQueued = prospectRepository.findByUserIdOrderByCreatedAtDesc(user.getId()).stream()
@@ -384,7 +355,7 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 				.count();
 
 		return ApiResponse.ok(
-				sent + " sent",
+				sendSummary(sent, skippedSuppressed, skippedUndeliverable),
 				new RelaySendOutreachResponse(sent, skippedSuppressed, (int) remainingQueued, listPartners(user)));
 	}
 
@@ -711,5 +682,20 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 			return trimmed.substring(0, max);
 		}
 		return trimmed;
+	}
+	private static boolean isUndeliverableAddress(String email) {
+		String v = email.trim().toLowerCase(Locale.ROOT);
+		return v.endsWith(".example") || v.endsWith(".invalid") || v.endsWith(".test") || v.endsWith(".localhost");
+	}
+
+	private static String sendSummary(int sent, int skippedSuppressed, int skippedUndeliverable) {
+		StringBuilder summary = new StringBuilder(sent + " sent");
+		if (skippedSuppressed > 0) {
+			summary.append(", ").append(skippedSuppressed).append(" suppressed");
+		}
+		if (skippedUndeliverable > 0) {
+			summary.append(", ").append(skippedUndeliverable).append(" skipped (no real email address)");
+		}
+		return summary.toString();
 	}
 }
