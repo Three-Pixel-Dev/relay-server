@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 public class RelayAiCredentialService {
 
 	private static final List<String> GEMINI_SERVICE_IDS = List.of("gemini", "google", "google-ai", "llm");
+	private static final List<String> IMAGE_SERVICE_IDS = List.of("img", "image", "gemini-image");
 
 	private final RelayServiceConnectionRepository serviceConnectionRepository;
 	private final CredentialEncryptionService credentialEncryptionService;
@@ -32,6 +33,52 @@ public class RelayAiCredentialService {
 
 	public String requireChatModelKey(Long userId) {
 		return resolveGeminiKey(userId);
+	}
+
+	public String requireImageModelKey(Long userId) {
+		boolean sawOpenAiKey = false;
+		for (String serviceId : IMAGE_SERVICE_IDS) {
+			Optional<RelayServiceConnection> conn = serviceConnectionRepository
+					.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
+							userId,
+							serviceId,
+							RelayServiceStatus.CONNECTED);
+			if (conn.isPresent()) {
+				RelayServiceConnection connection = conn.get();
+				String rawStored = connection.getEncryptedCredential();
+				String key = trimToNull(credentialEncryptionService.decrypt(rawStored));
+				if (key != null) {
+					if (rawStored != null && !rawStored.startsWith("enc:v1:")) {
+						connection.setEncryptedCredential(credentialEncryptionService.encrypt(key));
+						serviceConnectionRepository.save(connection);
+					}
+					if (key.startsWith("sk-")) {
+						sawOpenAiKey = true;
+						continue;
+					}
+					return key;
+				}
+			}
+		}
+		String envKey = trimToNull(fallbackGeminiKey);
+		if (envKey != null && !envKey.startsWith("sk-")) {
+			return envKey;
+		}
+		if (sawOpenAiKey) {
+			throw new BusinessRuleException(
+					"Image model requires a Google Gemini API key (starts with AIza…). Update your Image model key in Connections.");
+		}
+		throw new BusinessRuleException(
+				"Connect your Google Gemini API key (under Image model in Connections) or set GEMINI_API_KEY before generating covers and page graphics.");
+	}
+
+	public Optional<String> resolveOptionalImageModelKey(Long userId) {
+		try {
+			return Optional.of(requireImageModelKey(userId));
+		}
+		catch (BusinessRuleException ignored) {
+			return Optional.empty();
+		}
 	}
 
 	private String resolveGeminiKey(Long userId) {

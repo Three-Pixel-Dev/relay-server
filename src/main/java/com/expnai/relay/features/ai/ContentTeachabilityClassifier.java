@@ -37,6 +37,7 @@ public class ContentTeachabilityClassifier {
 	private static final double MIN_BLOCKING_CONFIDENCE = 0.6;
 
 	private final ObjectMapper objectMapper;
+	private final AiUsageMeter aiUsageMeter;
 
 	public record ClassificationResult(
 			boolean teachable,
@@ -59,13 +60,14 @@ public class ContentTeachabilityClassifier {
 			return ClassificationResult.fallbackTeachable();
 		}
 		try {
+			Long productId = product != null ? product.getId() : null;
 			String prompt = buildPrompt(product, sources, passages);
 			String rawJson;
 			if (apiKey.trim().startsWith("sk-")) {
-				rawJson = callOpenAiCompatible(apiKey.trim(), prompt);
+				rawJson = callOpenAiCompatible(apiKey.trim(), prompt, productId);
 			}
 			else {
-				rawJson = callGemini(apiKey.trim(), prompt);
+				rawJson = callGemini(apiKey.trim(), prompt, productId);
 			}
 			return parseResponse(rawJson);
 		}
@@ -132,7 +134,7 @@ public class ContentTeachabilityClassifier {
 		return sb.toString();
 	}
 
-	private String callGemini(String apiKey, String prompt) {
+	private String callGemini(String apiKey, String prompt, Long productId) {
 		Client client = Client.builder().apiKey(apiKey).build();
 		GenerateContentConfig config = GenerateContentConfig.builder()
 				.responseMimeType("application/json")
@@ -140,13 +142,14 @@ public class ContentTeachabilityClassifier {
 				.build();
 		GenerateContentResponse response = client.models.generateContent(GEMINI_CLASSIFIER_MODEL, prompt, config);
 		String text = response.text();
+		aiUsageMeter.recordGeminiChat(productId, 0, GEMINI_CLASSIFIER_MODEL, response, prompt, text, "classify");
 		if (text == null || text.isBlank()) {
 			throw new IllegalStateException("Empty classifier response from Gemini");
 		}
 		return stripMarkdownFences(text);
 	}
 
-	private String callOpenAiCompatible(String apiKey, String prompt) throws Exception {
+	private String callOpenAiCompatible(String apiKey, String prompt, Long productId) throws Exception {
 		HttpClient httpClient = HttpClient.newBuilder()
 				.connectTimeout(Duration.ofSeconds(15))
 				.build();
@@ -173,6 +176,7 @@ public class ContentTeachabilityClassifier {
 		}
 		JsonNode root = objectMapper.readTree(response.body());
 		String content = root.path("choices").path(0).path("message").path("content").asText("");
+		aiUsageMeter.recordOpenAiChat(productId, 0, OPENAI_CLASSIFIER_MODEL, root, prompt, content, "classify");
 		if (content.isBlank()) {
 			throw new IllegalStateException("Empty classifier response from OpenAI");
 		}

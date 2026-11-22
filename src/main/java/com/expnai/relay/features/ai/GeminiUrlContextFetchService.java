@@ -18,11 +18,14 @@ import com.google.genai.types.UrlContextMetadata;
 import com.google.genai.types.UrlMetadata;
 import com.google.genai.types.UrlRetrievalStatus;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * Fallback web page text extractor using Gemini's built-in {@code url_context} tool
  * when Playwright Chromium cannot load or extract readable text from a public URL.
  */
 @Service
+@RequiredArgsConstructor
 public class GeminiUrlContextFetchService {
 
 	private static final Logger log = LoggerFactory.getLogger(GeminiUrlContextFetchService.class);
@@ -30,7 +33,13 @@ public class GeminiUrlContextFetchService {
 	private static final String UNREADABLE_PREFIX = "UNREADABLE_URL:";
 	private static final int MIN_EXTRACTED_CHARS = 40;
 
+	private final AiUsageMeter aiUsageMeter;
+
 	public String extractPageText(String geminiApiKey, String url) {
+		return extractPageText(geminiApiKey, url, null, null);
+	}
+
+	public String extractPageText(String geminiApiKey, String url, Long productId, Integer buildStep) {
 		if (geminiApiKey == null || geminiApiKey.isBlank()) {
 			throw new IllegalArgumentException("Missing Gemini API key for URL Context fallback.");
 		}
@@ -57,9 +66,13 @@ public class GeminiUrlContextFetchService {
 					prompt,
 					config);
 
+			String rawText = response.text();
+			aiUsageMeter.recordGeminiChat(
+					productId, buildStep, GEMINI_URL_CONTEXT_MODEL, response, prompt, rawText, "url_context");
+
 			verifyUrlRetrievalMetadata(response, url);
 
-			String text = response.text();
+			String text = rawText;
 			if (text == null || text.isBlank()) {
 				throw new IllegalArgumentException("Gemini URL Context returned an empty response for " + url);
 			}

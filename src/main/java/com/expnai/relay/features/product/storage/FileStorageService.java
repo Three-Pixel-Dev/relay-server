@@ -95,6 +95,40 @@ public class FileStorageService {
 		}
 	}
 
+	public String storeBytes(Long productId, String filename, byte[] bytes) {
+		if (bytes == null || bytes.length == 0) {
+			throw new BusinessRuleException("Export file content is empty.");
+		}
+		String safeName = sanitizeFilename(filename != null ? filename : "export.bin");
+		String relativeKey = "products/" + productId + "/exports/" + safeName;
+		Path target = resolvePath(relativeKey);
+		try {
+			Files.createDirectories(target.getParent());
+			Files.write(target, bytes);
+			return relativeKey;
+		}
+		catch (IOException ex) {
+			throw new BusinessRuleException("Failed to store export file: " + safeName);
+		}
+	}
+
+	public String storeGraphicBytes(Long productId, String filename, byte[] bytes) {
+		if (bytes == null || bytes.length == 0) {
+			throw new BusinessRuleException("Graphic image content is empty.");
+		}
+		String safeName = sanitizeFilename(filename != null ? filename : "graphic.png");
+		String relativeKey = "products/" + productId + "/graphics/" + safeName;
+		Path target = resolvePath(relativeKey);
+		try {
+			Files.createDirectories(target.getParent());
+			Files.write(target, bytes);
+			return relativeKey;
+		}
+		catch (IOException ex) {
+			throw new BusinessRuleException("Failed to store graphic file: " + safeName);
+		}
+	}
+
 	public Path resolvePath(String storageKey) {
 		if (storageKey == null || storageKey.isBlank()) {
 			throw new BusinessRuleException("Missing storage key.");

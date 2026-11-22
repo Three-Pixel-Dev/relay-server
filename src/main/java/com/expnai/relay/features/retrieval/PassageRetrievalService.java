@@ -39,8 +39,19 @@ public class PassageRetrievalService {
 			String queryText,
 			int topK,
 			String geminiApiKey) {
+		return retrieveWithApiKey(productId, queryText, topK, geminiApiKey, null);
+	}
+
+	@Transactional(readOnly = true)
+	public List<RetrievedPassage> retrieveWithApiKey(
+			Long productId,
+			String queryText,
+			int topK,
+			String geminiApiKey,
+			Integer buildStep) {
 		int limit = Math.max(1, Math.min(topK, 100));
-		String queryVector = geminiEmbeddingService.embedQueryAsVectorLiteral(geminiApiKey, queryText);
+		String queryVector = geminiEmbeddingService.embedQueryAsVectorLiteral(
+				geminiApiKey, queryText, productId, buildStep);
 
 		String sql = """
 				SELECT p.id AS passage_id,

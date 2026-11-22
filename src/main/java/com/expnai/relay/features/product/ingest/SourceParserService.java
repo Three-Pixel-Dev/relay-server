@@ -300,7 +300,8 @@ public class SourceParserService {
 				progressCallback.accept("Browser could not read " + displayName + "; trying Gemini URL read");
 			}
 			try {
-				String geminiText = geminiUrlContextFetchService.extractPageText(chatApiKey, fullUrl);
+				Long productId = source.getProduct() != null ? source.getProduct().getId() : null;
+				String geminiText = geminiUrlContextFetchService.extractPageText(chatApiKey, fullUrl, productId, 0);
 				combined = normalizeWhitespace(geminiText);
 			}
 			catch (Exception geminiEx) {

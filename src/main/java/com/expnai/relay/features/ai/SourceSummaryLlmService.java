@@ -35,6 +35,7 @@ public class SourceSummaryLlmService {
 	private static final String OPENAI_SUMMARY_MODEL = "gpt-4o-mini";
 
 	private final ObjectMapper objectMapper;
+	private final AiUsageMeter aiUsageMeter;
 
 	public record ThemeItem(String t, String d, String level, Integer hits) {
 		public ThemeItem(String t, String d, String level) {
@@ -68,13 +69,14 @@ public class SourceSummaryLlmService {
 		if (apiKey == null || apiKey.isBlank()) {
 			throw new BusinessRuleException("Missing Text model API key for source summary.");
 		}
+		Long productId = product != null ? product.getId() : null;
 		String prompt = buildPrompt(product, passages, totalPassages);
 		String rawJson;
 		if (apiKey.trim().startsWith("sk-")) {
-			rawJson = callOpenAiCompatible(apiKey.trim(), prompt);
+			rawJson = callOpenAiCompatible(apiKey.trim(), prompt, productId);
 		}
 		else {
-			rawJson = callGemini(apiKey.trim(), prompt);
+			rawJson = callGemini(apiKey.trim(), prompt, productId);
 		}
 		return parseResponse(rawJson);
 	}
@@ -138,7 +140,7 @@ public class SourceSummaryLlmService {
 		return sb.toString();
 	}
 
-	private String callGemini(String apiKey, String prompt) {
+	private String callGemini(String apiKey, String prompt, Long productId) {
 		try {
 			Client client = Client.builder().apiKey(apiKey).build();
 			GenerateContentConfig config = GenerateContentConfig.builder()
@@ -147,6 +149,7 @@ public class SourceSummaryLlmService {
 					.build();
 			GenerateContentResponse response = client.models.generateContent(GEMINI_SUMMARY_MODEL, prompt, config);
 			String text = response.text();
+			aiUsageMeter.recordGeminiChat(productId, 0, GEMINI_SUMMARY_MODEL, response, prompt, text, "summary");
 			if (text == null || text.isBlank()) {
 				throw new BusinessRuleException("Gemini returned an empty summary response.");
 			}
@@ -161,7 +164,7 @@ public class SourceSummaryLlmService {
 		}
 	}
 
-	private String callOpenAiCompatible(String apiKey, String prompt) {
+	private String callOpenAiCompatible(String apiKey, String prompt, Long productId) {
 		try {
 			HttpClient httpClient = HttpClient.newBuilder()
 					.connectTimeout(Duration.ofSeconds(20))
@@ -187,6 +190,7 @@ public class SourceSummaryLlmService {
 			}
 			JsonNode root = objectMapper.readTree(response.body());
 			String content = root.path("choices").path(0).path("message").path("content").asText("");
+			aiUsageMeter.recordOpenAiChat(productId, 0, OPENAI_SUMMARY_MODEL, root, prompt, content, "summary");
 			if (content.isBlank()) {
 				throw new BusinessRuleException("Text model returned an empty summary response.");
 			}

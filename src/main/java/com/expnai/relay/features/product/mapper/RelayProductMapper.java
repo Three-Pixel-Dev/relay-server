@@ -9,16 +9,28 @@ import java.util.Map;
 
 import org.springframework.stereotype.Component;
 
+import com.expnai.relay.domain.entity.RelayBrand;
+import com.expnai.relay.domain.entity.RelayCitation;
+import com.expnai.relay.domain.entity.RelayPocket;
 import com.expnai.relay.domain.entity.RelayProduct;
+import com.expnai.relay.domain.entity.RelayProductFile;
+import com.expnai.relay.domain.entity.RelaySection;
 import com.expnai.relay.domain.entity.RelaySource;
 import com.expnai.relay.domain.entity.RelaySourceProfile;
 import com.expnai.relay.domain.entity.RelayThreadMessage;
+import com.expnai.relay.domain.enums.RelaySectionStatus;
+import com.expnai.relay.features.ai.AiPricingService;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.BrandDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.MetricsDto;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.PocketDto;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.PocketScoresDto;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.ProductFileDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ProductStepDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.PromoteStateDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.PublishStateDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ReadCountsDto;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.SectionDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.SourceItemDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.SourceProfileDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ThemeDto;
@@ -35,11 +47,67 @@ public class RelayProductMapper {
 	private static final int TOTAL_BUILD_STEPS = 7;
 
 	private final ObjectMapper objectMapper;
+	private final AiPricingService aiPricingService;
 
 	public RelayProductResponse toDto(
 			RelayProduct product,
 			List<RelaySource> sources,
 			RelaySourceProfile profile,
+			List<RelayThreadMessage> threadMessages) {
+		return toDto(product, sources, profile, List.of(), List.of(), List.of(), threadMessages);
+	}
+
+	public RelayProductResponse toDto(
+			RelayProduct product,
+			List<RelaySource> sources,
+			RelaySourceProfile profile,
+			List<RelayPocket> pockets,
+			List<RelayThreadMessage> threadMessages) {
+		return toDto(product, sources, profile, pockets, List.of(), List.of(), threadMessages);
+	}
+
+	public RelayProductResponse toDto(
+			RelayProduct product,
+			List<RelaySource> sources,
+			RelaySourceProfile profile,
+			List<RelayPocket> pockets,
+			List<RelaySection> sections,
+			List<RelayThreadMessage> threadMessages) {
+		return toDto(product, sources, profile, pockets, sections, List.of(), threadMessages);
+	}
+
+	public RelayProductResponse toDto(
+			RelayProduct product,
+			List<RelaySource> sources,
+			RelaySourceProfile profile,
+			List<RelayPocket> pockets,
+			List<RelaySection> sections,
+			List<RelayCitation> citations,
+			List<RelayThreadMessage> threadMessages) {
+		return toDto(product, sources, profile, pockets, sections, citations, null, threadMessages);
+	}
+
+	public RelayProductResponse toDto(
+			RelayProduct product,
+			List<RelaySource> sources,
+			RelaySourceProfile profile,
+			List<RelayPocket> pockets,
+			List<RelaySection> sections,
+			List<RelayCitation> citations,
+			RelayBrand brand,
+			List<RelayThreadMessage> threadMessages) {
+		return toDto(product, sources, profile, pockets, sections, citations, brand, List.of(), threadMessages);
+	}
+
+	public RelayProductResponse toDto(
+			RelayProduct product,
+			List<RelaySource> sources,
+			RelaySourceProfile profile,
+			List<RelayPocket> pockets,
+			List<RelaySection> sections,
+			List<RelayCitation> citations,
+			RelayBrand brand,
+			List<RelayProductFile> files,
 			List<RelayThreadMessage> threadMessages) {
 
 		List<SourceItemDto> sourceDtos = sources.stream()
@@ -47,6 +115,43 @@ public class RelayProductMapper {
 				.toList();
 
 		SourceProfileDto profileDto = profile != null ? toProfileDto(profile) : null;
+
+		List<PocketDto> pocketDtos = (pockets != null ? pockets : List.<RelayPocket>of()).stream()
+				.map(this::toPocketDto)
+				.toList();
+
+		PocketDto chosenPocketDto = null;
+		if (product.getChosenPocket() != null) {
+			Long chosenId = product.getChosenPocket().getId();
+			chosenPocketDto = pocketDtos.stream()
+					.filter(p -> p.id().equals(String.valueOf(chosenId)))
+					.findFirst()
+					.orElseGet(() -> toPocketDto(product.getChosenPocket()));
+		}
+
+		Map<Long, List<String>> citesBySectionId = new java.util.HashMap<>();
+		if (citations != null) {
+			for (RelayCitation c : citations) {
+				if (c.getSection() == null || c.getSection().getId() == null) {
+					continue;
+				}
+				String label = c.getLocator();
+				if (label == null || label.isBlank()) {
+					if (c.getPassage() != null && c.getPassage().getLocator() != null) {
+						label = c.getPassage().getLocator();
+					}
+				}
+				if (label != null && !label.isBlank()) {
+					citesBySectionId
+							.computeIfAbsent(c.getSection().getId(), k -> new ArrayList<>())
+							.add(label.trim());
+				}
+			}
+		}
+
+		List<SectionDto> sectionDtos = (sections != null ? sections : List.<RelaySection>of()).stream()
+				.map(s -> toSectionDto(s, citesBySectionId.getOrDefault(s.getId(), List.of())))
+				.toList();
 
 		List<ProductStepDto> steps = buildSteps(product);
 
@@ -67,8 +172,25 @@ public class RelayProductMapper {
 				? product.getProductType().getCode().toLowerCase(Locale.ROOT)
 				: null;
 
+		List<ProductFileDto> fileDtos = (files != null ? files : List.<RelayProductFile>of()).stream()
+				.map(f -> new ProductFileDto(
+						String.valueOf(f.getId()),
+						f.getFileType() != null ? f.getFileType() : "",
+						f.getVersion(),
+						"/api/products/" + product.getId() + "/files/" + f.getId() + "/download"))
+				.toList();
+
 		Instant createdAt = product.getCreatedAt() != null ? product.getCreatedAt() : Instant.now();
 		Instant updatedAt = product.getUpdatedAt() != null ? product.getUpdatedAt() : createdAt;
+
+		int doneSectionCount = (int) (sections != null ? sections : List.<RelaySection>of()).stream()
+				.filter(s -> s.getStatus() == RelaySectionStatus.DONE)
+				.count();
+		boolean pricingAvailable = aiPricingService.isPricingAvailable();
+		String pricingMessage = pricingAvailable ? null : AiPricingService.PRICING_UNAVAILABLE_MESSAGE;
+		BigDecimal remainingEstimate = aiPricingService
+				.estimateRemainingUsd(product, sourceDtos.size(), sectionDtos.size(), doneSectionCount)
+				.orElse(null);
 
 		return new RelayProductResponse(
 				String.valueOf(product.getId()),
@@ -81,12 +203,13 @@ public class RelayProductMapper {
 				sourceDtos,
 				profileDto,
 				List.of(),
-				List.of(),
-				null,
+				pocketDtos,
+				chosenPocketDto,
 				type,
-				List.of(),
+				sectionDtos,
 				product.getWordCount() != null ? product.getWordCount() : 0,
-				null,
+				brand != null ? toBrandDto(product, brand) : null,
+				fileDtos,
 				stage,
 				product.getBuildStep(),
 				steps,
@@ -96,6 +219,9 @@ public class RelayProductMapper {
 				new PromoteStateDto(List.of(), "todo", false),
 				new MetricsDto(0, 0.0, 0, 0),
 				product.getSpend() != null ? product.getSpend() : BigDecimal.ZERO,
+				remainingEstimate,
+				pricingAvailable,
+				pricingMessage,
 				product.getQualityWarning(),
 				product.isCancelled(),
 				createdAt.toString(),
@@ -145,6 +271,104 @@ public class RelayProductMapper {
 				profile.getVoice() != null ? profile.getVoice() : "");
 	}
 
+	private PocketDto toPocketDto(RelayPocket pocket) {
+		PocketScoresDto scores = new PocketScoresDto(75, 72, 74, 78);
+		if (pocket.getScoresJson() != null && !pocket.getScoresJson().isBlank()) {
+			try {
+				scores = objectMapper.readValue(pocket.getScoresJson(), PocketScoresDto.class);
+			}
+			catch (Exception ignored) {
+			}
+		}
+		List<String> evidence = List.of();
+		if (pocket.getEvidenceJson() != null && !pocket.getEvidenceJson().isBlank()) {
+			try {
+				evidence = objectMapper.readValue(pocket.getEvidenceJson(), new TypeReference<List<String>>() {
+				});
+			}
+			catch (Exception ignored) {
+				evidence = List.of();
+			}
+		}
+		return new PocketDto(
+				String.valueOf(pocket.getId()),
+				pocket.getHeadline() != null ? pocket.getHeadline() : "",
+				pocket.getIndustry() != null ? pocket.getIndustry() : "",
+				pocket.getNiche() != null ? pocket.getNiche() : "",
+				pocket.getKnowledge() != null ? pocket.getKnowledge() : "",
+				pocket.getProblem() != null ? pocket.getProblem() : "",
+				scores,
+				evidence != null ? evidence : List.of(),
+				pocket.isRecommended(),
+				pocket.isGrounded());
+	}
+
+	private SectionDto toSectionDto(RelaySection section, List<String> cites) {
+		String status = section.getStatus() != null
+				? section.getStatus().getCode().toLowerCase(Locale.ROOT)
+				: "todo";
+		return new SectionDto(
+				String.valueOf(section.getId()),
+				section.getTitle() != null ? section.getTitle() : "",
+				section.getMoment() != null ? section.getMoment() : "",
+				section.getWords() != null ? section.getWords() : 0,
+				section.getText() != null ? section.getText() : "",
+				status,
+				cites != null ? List.copyOf(cites) : List.of());
+	}
+
+	private BrandDto toBrandDto(RelayProduct product, RelayBrand brand) {
+		int palette = brand.getPaletteIndex() != null
+				? Math.max(0, Math.min(2, brand.getPaletteIndex()))
+				: 0;
+		int cover = brand.getCoverVariant() != null
+				? Math.max(0, Math.min(2, brand.getCoverVariant()))
+				: 0;
+		List<String> coverUrls = new ArrayList<>();
+		if (brand.getCoverImageKeysJson() != null && !brand.getCoverImageKeysJson().isBlank()) {
+			try {
+				List<String> keys = objectMapper.readValue(
+						brand.getCoverImageKeysJson(), new TypeReference<List<String>>() {
+						});
+				for (int i = 0; i < keys.size(); i++) {
+					String key = keys.get(i);
+					coverUrls.add((key != null && !key.isBlank())
+							? "/api/products/" + product.getId() + "/brand/covers/" + i
+							: null);
+				}
+			}
+			catch (Exception ignored) {
+			}
+		}
+
+		Map<String, String> pageGraphicUrls = new java.util.LinkedHashMap<>();
+		if (brand.getPageGraphicsJson() != null && !brand.getPageGraphicsJson().isBlank()) {
+			try {
+				Map<String, String> keys = objectMapper.readValue(
+						brand.getPageGraphicsJson(), new TypeReference<Map<String, String>>() {
+						});
+				if (keys != null) {
+					for (Map.Entry<String, String> entry : keys.entrySet()) {
+						if (entry.getValue() != null && !entry.getValue().isBlank()) {
+							pageGraphicUrls.put(
+									entry.getKey(),
+									"/api/products/" + product.getId() + "/brand/pages/" + entry.getKey());
+						}
+					}
+				}
+			}
+			catch (Exception ignored) {
+			}
+		}
+
+		return new BrandDto(
+				brand.getTitle() != null ? brand.getTitle() : "",
+				palette,
+				cover,
+				coverUrls,
+				pageGraphicUrls);
+	}
+
 	private List<ProductStepDto> buildSteps(RelayProduct product) {
 		int cur = product.getBuildStep();
 		String currentStatus = (product.getStepStatus() != null && !product.getStepStatus().isBlank())
@@ -159,7 +383,9 @@ public class RelayProductMapper {
 				steps.add(new ProductStepDto("done", i == 0 ? currentNote : "", null, null, null));
 			}
 			else if (i == cur) {
-				Boolean gatePassed = "quality_gate".equals(currentStatus) ? Boolean.FALSE : null;
+				Boolean gatePassed = ("quality_gate".equals(currentStatus) || "gate".equals(currentStatus))
+						? Boolean.FALSE
+						: (i == 4 && product.isVoiceApproved() ? Boolean.TRUE : null);
 				steps.add(new ProductStepDto(
 						currentStatus,
 						currentNote,

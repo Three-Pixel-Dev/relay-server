@@ -3,10 +3,13 @@ package com.expnai.relay.features.product.controller;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,9 +21,11 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.expnai.relay.common.web.ApiResponse;
+import com.expnai.relay.features.product.dto.request.RelayAddSectionRequest;
 import com.expnai.relay.features.product.dto.request.RelayAddSourcesRequest;
 import com.expnai.relay.features.product.dto.request.RelayCreateProductRequest;
 import com.expnai.relay.features.product.dto.request.RelaySuggestChangeRequest;
+import com.expnai.relay.features.product.dto.request.RelayUpdateBrandRequest;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.service.RelayProductService;
 
@@ -116,6 +121,78 @@ public class RelayProductController {
 	@Operation(summary = "Approve current step result (advances step 0 to step 1)")
 	public ApiResponse<RelayProductResponse> approve(@PathVariable Long id) {
 		return productService.approve(id);
+	}
+
+	@PostMapping("/{id}/pockets/{pocketId}/choose")
+	@Operation(summary = "Choose a profitable pocket on step 1 (advances to step 2)")
+	public ApiResponse<RelayProductResponse> choosePocket(
+			@PathVariable Long id,
+			@PathVariable Long pocketId) {
+		return productService.choosePocket(id, pocketId);
+	}
+
+	@PostMapping("/{id}/types/{typeId}/choose")
+	@Operation(summary = "Choose a product type on step 2 (advances to step 3)")
+	public ApiResponse<RelayProductResponse> chooseType(
+			@PathVariable Long id,
+			@PathVariable String typeId) {
+		return productService.chooseType(id, typeId);
+	}
+
+	@PostMapping("/{id}/sections")
+	@Operation(summary = "Add a custom section to the structure TOC during step 3 review")
+	public ApiResponse<RelayProductResponse> addSection(
+			@PathVariable Long id,
+			@RequestBody RelayAddSectionRequest request) {
+		return productService.addSection(id, request);
+	}
+
+	@DeleteMapping("/{id}/sections/{sectionId}")
+	@Operation(summary = "Remove a section from the structure TOC during step 3 review")
+	public ApiResponse<RelayProductResponse> removeSection(
+			@PathVariable Long id,
+			@PathVariable Long sectionId) {
+		return productService.removeSection(id, sectionId);
+	}
+
+	@PostMapping("/{id}/sections/{sectionId}/regenerate")
+	@Operation(summary = "Regenerate a single manuscript section during step 4 gate or review")
+	public ApiResponse<RelayProductResponse> regenerateSection(
+			@PathVariable Long id,
+			@PathVariable Long sectionId) {
+		return productService.regenerateSection(id, sectionId);
+	}
+
+	@PatchMapping("/{id}/brand")
+	@Operation(summary = "Update product cover title, palette, or cover variant during step 5 review")
+	public ApiResponse<RelayProductResponse> updateBrand(
+			@PathVariable Long id,
+			@RequestBody RelayUpdateBrandRequest request) {
+		return productService.updateBrand(id, request);
+	}
+
+	@GetMapping("/{id}/files/{fileId}/download")
+	@Operation(summary = "Download a generated product export file")
+	public ResponseEntity<Resource> downloadFile(
+			@PathVariable Long id,
+			@PathVariable Long fileId) {
+		return productService.downloadFile(id, fileId);
+	}
+
+	@GetMapping("/{id}/brand/covers/{variant}")
+	@Operation(summary = "Stream a generated cover image variant (0, 1, or 2)")
+	public ResponseEntity<Resource> getBrandCoverImage(
+			@PathVariable Long id,
+			@PathVariable int variant) {
+		return productService.getBrandCoverImage(id, variant);
+	}
+
+	@GetMapping("/{id}/brand/pages/{sectionId}")
+	@Operation(summary = "Stream a generated section page graphic image")
+	public ResponseEntity<Resource> getSectionGraphicImage(
+			@PathVariable Long id,
+			@PathVariable Long sectionId) {
+		return productService.getSectionGraphicImage(id, sectionId);
 	}
 
 	@PostMapping("/{id}/suggest")

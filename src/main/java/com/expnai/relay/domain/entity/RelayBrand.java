@@ -1,5 +1,8 @@
 package com.expnai.relay.domain.entity;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import com.expnai.relay.common.persistence.MasterEntity;
 
 import jakarta.persistence.Column;
@@ -35,4 +38,12 @@ public class RelayBrand extends MasterEntity {
 
 	@Column(name = "logo_url", length = 2000)
 	private String logoUrl;
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "cover_image_keys_json", columnDefinition = "jsonb")
+	private String coverImageKeysJson;
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "page_graphics_json", columnDefinition = "jsonb")
+	private String pageGraphicsJson;
 }

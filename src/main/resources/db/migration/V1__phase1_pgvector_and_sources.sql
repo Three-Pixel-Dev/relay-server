@@ -13,6 +13,7 @@ ALTER TABLE IF EXISTS relay_product
     ADD COLUMN IF NOT EXISTS step_note TEXT,
     ADD COLUMN IF NOT EXISTS quality_warning TEXT,
     ADD COLUMN IF NOT EXISTS quality_override BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS voice_approved BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS cancelled BOOLEAN NOT NULL DEFAULT false;
 
 -- 2. relay_source storage & error columns

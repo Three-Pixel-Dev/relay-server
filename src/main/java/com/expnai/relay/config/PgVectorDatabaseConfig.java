@@ -80,6 +80,25 @@ public class PgVectorDatabaseConfig {
 				if (columnUdtName(conn, "relay_product", "quality_override") == null) {
 					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS quality_override BOOLEAN NOT NULL DEFAULT false");
 				}
+				if (columnUdtName(conn, "relay_product", "voice_approved") == null) {
+					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS voice_approved BOOLEAN NOT NULL DEFAULT false");
+				}
+				if (columnUdtName(conn, "relay_product", "spend") != null) {
+					stmt.execute("ALTER TABLE relay_product ALTER COLUMN spend TYPE NUMERIC(12,6)");
+				}
+			}
+
+			if (tableExists(conn, "relay_ai_usage_event") && columnUdtName(conn, "relay_ai_usage_event", "cost_usd") != null) {
+				stmt.execute("ALTER TABLE relay_ai_usage_event ALTER COLUMN cost_usd DROP NOT NULL");
+			}
+
+			if (tableExists(conn, "relay_brand")) {
+				if (columnUdtName(conn, "relay_brand", "cover_image_keys_json") == null) {
+					stmt.execute("ALTER TABLE relay_brand ADD COLUMN IF NOT EXISTS cover_image_keys_json JSONB");
+				}
+				if (columnUdtName(conn, "relay_brand", "page_graphics_json") == null) {
+					stmt.execute("ALTER TABLE relay_brand ADD COLUMN IF NOT EXISTS page_graphics_json JSONB");
+				}
 			}
 		}
 		catch (Exception ex) {

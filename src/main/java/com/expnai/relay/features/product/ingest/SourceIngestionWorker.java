@@ -1,6 +1,5 @@
 package com.expnai.relay.features.product.ingest;
 
-import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,7 +14,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayPassage;
+import com.expnai.relay.domain.entity.RelayPocket;
 import com.expnai.relay.domain.entity.RelayProduct;
+import com.expnai.relay.domain.entity.RelaySection;
 import com.expnai.relay.domain.entity.RelaySource;
 import com.expnai.relay.domain.entity.RelaySourceProfile;
 import com.expnai.relay.domain.entity.RelayThreadMessage;
@@ -23,10 +24,13 @@ import com.expnai.relay.domain.enums.RelaySourceKind;
 import com.expnai.relay.domain.enums.RelaySourceStatus;
 import com.expnai.relay.domain.enums.RelayThreadWho;
 import com.expnai.relay.domain.repository.RelayPassageRepository;
+import com.expnai.relay.domain.repository.RelayPocketRepository;
 import com.expnai.relay.domain.repository.RelayProductRepository;
+import com.expnai.relay.domain.repository.RelaySectionRepository;
 import com.expnai.relay.domain.repository.RelaySourceProfileRepository;
 import com.expnai.relay.domain.repository.RelaySourceRepository;
 import com.expnai.relay.domain.repository.RelayThreadMessageRepository;
+import com.expnai.relay.features.ai.AiPricingService;
 import com.expnai.relay.features.ai.GeminiEmbeddingService;
 import com.expnai.relay.features.ai.SourceSummaryLlmService;
 import com.expnai.relay.features.ai.SourceSummaryLlmService.GeneratedSourceProfile;
@@ -48,7 +52,6 @@ import lombok.RequiredArgsConstructor;
 public class SourceIngestionWorker {
 
 	private static final Logger log = LoggerFactory.getLogger(SourceIngestionWorker.class);
-	private static final BigDecimal STEP_0_SPEND = new BigDecimal("0.25");
 	private static final int THEME_RETRIEVAL_TOP_K = 8;
 	private static final double THEME_HIT_MIN_SCORE = 0.35;
 	private static final int THEME_QUERY_MAX_CHARS = 400;
@@ -57,12 +60,15 @@ public class SourceIngestionWorker {
 	private final RelaySourceRepository sourceRepository;
 	private final RelayPassageRepository passageRepository;
 	private final RelaySourceProfileRepository sourceProfileRepository;
+	private final RelayPocketRepository pocketRepository;
+	private final RelaySectionRepository sectionRepository;
 	private final RelayThreadMessageRepository threadMessageRepository;
 	private final SourceParserService sourceParserService;
 	private final SourceQualityService sourceQualityService;
 	private final GeminiEmbeddingService geminiEmbeddingService;
 	private final PassageRetrievalService passageRetrievalService;
 	private final SourceSummaryLlmService sourceSummaryLlmService;
+	private final AiPricingService aiPricingService;
 	private final RelayProductMapper productMapper;
 	private final ProductSseHub productSseHub;
 	private final TransactionTemplate transactionTemplate;
@@ -190,7 +196,9 @@ public class SourceIngestionWorker {
 					String vectorLiteral = geminiEmbeddingService.embedDocumentAsVectorLiteral(
 							embedApiKey,
 							source.getName(),
-							chunk.text());
+							chunk.text(),
+							productId,
+							0);
 					embeddedChunks.add(new EmbeddedChunk(chunk.text(), chunk.locator(), vectorLiteral));
 				}
 
@@ -237,8 +245,11 @@ public class SourceIngestionWorker {
 						product.setStepStatus("done");
 						product.setBuildStep(1);
 						productRepository.save(product);
+						String pocketsEst = aiPricingService.estimatePocketsUsd()
+								.map(est -> "About ~$" + est + " in AI (estimate), a minute.")
+								.orElse("AI cost estimate unavailable right now.");
 						saveThreadMessage(product, RelayThreadWho.RELAY,
-								"Next: **Profitable pockets**. About $0.30 in AI, a minute.");
+								"Next: **Profitable pockets**. " + pocketsEst);
 					});
 				});
 				publishTerminalProduct(productId);
@@ -309,7 +320,8 @@ public class SourceIngestionWorker {
 				productId,
 				queryText,
 				25,
-				embedApiKey);
+				embedApiKey,
+				0);
 
 		GeneratedSourceProfile generated = sourceSummaryLlmService.summarizePassages(
 				chatApiKey,
@@ -355,8 +367,6 @@ public class SourceIngestionWorker {
 			product.setQualityWarning(null);
 			product.setQualityOverride(false);
 			product.setStepStatus("review");
-			BigDecimal currentSpend = product.getSpend() != null ? product.getSpend() : BigDecimal.ZERO;
-			product.setSpend(currentSpend.add(STEP_0_SPEND));
 			productRepository.save(product);
 
 			String summaryMsg = buildSummaryReadyMessage(finalVideos, finalDocs, finalPassages);
@@ -386,7 +396,8 @@ public class SourceIngestionWorker {
 						productId,
 						themeQuery,
 						topK,
-						embedApiKey);
+						embedApiKey,
+						0);
 				hits = (int) matches.stream()
 						.filter(p -> p.score() >= minScore)
 						.count();
@@ -603,9 +614,11 @@ public class SourceIngestionWorker {
 			}
 			List<RelaySource> sources = sourceRepository.findByProductIdOrderByCreatedAtAsc(productId);
 			RelaySourceProfile profile = sourceProfileRepository.findByProductId(productId).orElse(null);
+			List<RelayPocket> pockets = pocketRepository.findByProductIdOrderByIdAsc(productId);
+			List<RelaySection> sections = sectionRepository.findByProductIdOrderBySortOrderAscIdAsc(productId);
 			List<RelayThreadMessage> messages = threadMessageRepository
 					.findByProductIdOrderByCreatedAtAscIdAsc(productId);
-			return productMapper.toDto(product, sources, profile, messages);
+			return productMapper.toDto(product, sources, profile, pockets, sections, messages);
 		});
 	}
 }

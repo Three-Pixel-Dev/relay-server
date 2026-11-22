@@ -64,7 +64,7 @@ public class RelayProduct extends MasterEntity {
 	@Column(name = "word_count")
 	private Integer wordCount;
 
-	@Column(name = "spend", precision = 12, scale = 2)
+	@Column(name = "spend", precision = 12, scale = 6)
 	private BigDecimal spend = BigDecimal.ZERO;
 
 	@Column(name = "step_status", nullable = false, length = 20)
@@ -82,6 +82,9 @@ public class RelayProduct extends MasterEntity {
 
 	@Column(name = "quality_override", nullable = false)
 	private boolean qualityOverride = false;
+
+	@Column(name = "voice_approved", nullable = false)
+	private boolean voiceApproved = false;
 
 	@Column(name = "cancelled", nullable = false)
 	private boolean cancelled = false;

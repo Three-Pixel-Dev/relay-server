@@ -18,12 +18,13 @@ public record RelayProductResponse(
 		List<SourceItemDto> sources,
 		SourceProfileDto profile,
 		List<Object> orders,
-		List<Object> pockets,
-		Object pocket,
+		List<PocketDto> pockets,
+		PocketDto pocket,
 		String type,
-		List<Object> structure,
+		List<SectionDto> structure,
 		int words,
-		Object brand,
+		BrandDto brand,
+		List<ProductFileDto> files,
 		String stage,
 		int cur,
 		List<ProductStepDto> steps,
@@ -33,6 +34,9 @@ public record RelayProductResponse(
 		PromoteStateDto promote,
 		MetricsDto metrics,
 		BigDecimal spend,
+		BigDecimal remainingEstimate,
+		boolean pricingAvailable,
+		String pricingMessage,
 		String qualityWarning,
 		boolean cancelled,
 		String created,
@@ -74,6 +78,56 @@ public record RelayProductResponse(
 			String d,
 			String level,
 			Integer hits
+	) {
+	}
+
+	public record PocketScoresDto(
+			int pain,
+			int worse,
+			int power,
+			int speed
+	) {
+	}
+
+	public record PocketDto(
+			String id,
+			String h,
+			String ind,
+			String niche,
+			String know,
+			String prob,
+			PocketScoresDto scores,
+			List<String> src,
+			boolean rec,
+			boolean grounded
+	) {
+	}
+
+	public record SectionDto(
+			String id,
+			String title,
+			String moment,
+			int words,
+			String text,
+			String status,
+			List<String> cites
+	) {
+	}
+
+	public record BrandDto(
+			String title,
+			int palette,
+			int cover,
+			List<String> coverImageUrls,
+			Map<String, String> pageGraphicUrls
+	) {
+	}
+
+	public record ProductFileDto(
+			String id,
+			String fileType,
+			int version,
+			String downloadPath
 	) {
 	}
 
