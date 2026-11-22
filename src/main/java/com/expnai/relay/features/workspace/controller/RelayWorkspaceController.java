@@ -33,6 +33,7 @@ import com.expnai.relay.domain.repository.RelayServiceConnectionRepository;
 import com.expnai.relay.domain.repository.RelaySubscriptionRepository;
 import com.expnai.relay.domain.repository.RelayUserRepository;
 import com.expnai.relay.features.auth.security.RelayUserPrincipal;
+import com.expnai.relay.features.whop.service.RelayWhopService;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +48,7 @@ public class RelayWorkspaceController {
 	private final RelaySubscriptionRepository subscriptionRepository;
 	private final RelayServiceConnectionRepository serviceConnectionRepository;
 	private final CredentialEncryptionService credentialEncryptionService;
+	private final RelayWhopService whopService;
 
 	@GetMapping
 	@Transactional(readOnly = true)
@@ -105,7 +107,10 @@ public class RelayWorkspaceController {
 
 		conn.setLabel(label);
 		conn.setStatus(RelayServiceStatus.CONNECTED);
-		if (credential != null && !credential.isBlank()) {
+		if ("whop".equalsIgnoreCase(serviceId)) {
+			whopService.connect(conn, credential);
+		}
+		else if (credential != null && !credential.isBlank()) {
 			String trimmed = credential.trim();
 			if (("llm".equalsIgnoreCase(serviceId) || "gemini".equalsIgnoreCase(serviceId))
 					&& trimmed.startsWith("sk-")) {
@@ -126,6 +131,9 @@ public class RelayWorkspaceController {
 		serviceConnectionRepository
 				.findFirstByUserIdAndServiceIdIgnoreCaseOrderByCreatedAtDesc(user.getId(), serviceId)
 				.ifPresent(conn -> {
+					if ("whop".equalsIgnoreCase(serviceId)) {
+						whopService.disconnect(conn);
+					}
 					conn.setStatus(RelayServiceStatus.DISCONNECTED);
 					conn.setEncryptedCredential(null);
 					serviceConnectionRepository.save(conn);

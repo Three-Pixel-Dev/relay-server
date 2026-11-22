@@ -36,4 +36,16 @@ public class RelayServiceConnection extends MasterEntity {
 
 	@Column(name = "scopes", columnDefinition = "text")
 	private String scopes;
+
+	@Column(name = "external_account_id", length = 100)
+	private String externalAccountId;
+
+	@Column(name = "webhook_token", length = 64, unique = true)
+	private String webhookToken;
+
+	@Column(name = "webhook_external_id", length = 100)
+	private String webhookExternalId;
+
+	@Column(name = "encrypted_webhook_secret", columnDefinition = "text")
+	private String encryptedWebhookSecret;
 }

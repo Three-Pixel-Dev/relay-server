@@ -37,4 +37,10 @@ public class RelayWhopProduct extends MasterEntity {
 
 	@Column(name = "partner_share", precision = 5, scale = 2)
 	private BigDecimal partnerShare;
+
+	@Column(name = "external_plan_id", length = 255)
+	private String externalPlanId;
+
+	@Column(name = "delivery_token", length = 64, unique = true)
+	private String deliveryToken;
 }

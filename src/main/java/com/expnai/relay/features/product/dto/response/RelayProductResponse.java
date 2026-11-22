@@ -42,6 +42,16 @@ public record RelayProductResponse(
 		String created,
 		String updated
 ) {
+	public RelayProductResponse withCommerce(List<Object> newOrders, PublishStateDto newPublish, MetricsDto newMetrics) {
+		return new RelayProductResponse(
+				id, name, input, mode, forElse, client, partnerId, sources, profile,
+				newOrders, pockets, pocket, type, structure, words, brand, files, stage, cur, steps, thread,
+				newPublish, distribute, promote, newMetrics, spend, remainingEstimate, pricingAvailable,
+				pricingMessage, qualityWarning, cancelled, created, updated);
+	}
+
+	public record OrderDto(String t, double amt, String via) {
+	}
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record SourceItemDto(
 			String id,

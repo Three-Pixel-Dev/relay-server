@@ -22,4 +22,6 @@ public interface RelayServiceConnectionRepository extends BaseRepository<RelaySe
 			Long userId,
 			String serviceId,
 			RelayServiceStatus status);
+
+	Optional<RelayServiceConnection> findByWebhookToken(String webhookToken);
 }
