@@ -1,4 +1,5 @@
-# Optional sidecars on the GCP VM (API JAR runs on the host via ./run-jar.sh).
+# Sidecars on the GCP VM (API JAR runs on the host via ./run-jar.sh).
+# Redis backs the live AI pricing cache (SPRING_DATA_REDIS_HOST=localhost).
 #
 # Playwright for WEB source scraping (matches .env.example Option A):
 #   docker compose up -d
@@ -17,3 +18,11 @@ services:
       ]
     ports:
       - "3000:3000"
+
+  redis:
+    image: redis:7-alpine
+    container_name: relay-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:6379:6379"

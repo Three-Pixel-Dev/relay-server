@@ -106,9 +106,9 @@ jobs:
           PORT="\${SERVER_PORT:-8080}"
           ok=0
           for i in \$(seq 1 36); do
-            if curl -fsS "http://127.0.0.1:\${PORT}/actuator/health" >/dev/null 2>&1; then
+            if curl -fsS "http://127.0.0.1:\${PORT}/actuator/health/readiness" >/dev/null 2>&1; then
               echo "Health check OK after \${i} attempt(s)."
-              curl -fsS "http://127.0.0.1:\${PORT}/actuator/health"
+              curl -fsS "http://127.0.0.1:\${PORT}/actuator/health/readiness"
               echo
               ok=1
               break
