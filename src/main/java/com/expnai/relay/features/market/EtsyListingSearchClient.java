@@ -32,7 +32,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class EtsyListingSearchClient {
 
-	private static final int SAMPLE_LIMIT = 25;
+	private static final int SAMPLE_LIMIT = 12;
 
 	private final ObjectMapper objectMapper;
 

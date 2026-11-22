@@ -3,8 +3,10 @@ package com.expnai.relay.features.market;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,9 +42,14 @@ public class MarketResearchService {
 	private final EtsyListingSearchClient etsyClient;
 	private final ApifyEtsySearchClient apifyClient;
 	private final SerpApiClient serpApiClient;
+	private final PlaywrightGoogleClient playwrightGoogleClient;
+	private final MarketplaceKeywordCache keywordCache;
 
 	@Value("${relay.market.marketplace-provider:auto}")
 	private String marketplaceProvider;
+
+	@Value("${relay.market.google-provider:serpapi}")
+	private String googleProvider;
 
 	public MarketResearchPack research(List<String> keywords, Consumer<String> progressCallback) {
 		List<String> cleanKeywords = keywords == null
@@ -51,7 +58,7 @@ public class MarketResearchService {
 						.filter(k -> k != null && !k.isBlank())
 						.map(String::trim)
 						.distinct()
-						.limit(6)
+						.limit(3)
 						.toList();
 
 		if (cleanKeywords.isEmpty()) {
@@ -72,52 +79,8 @@ public class MarketResearchService {
 			}
 			runMarketplacePhase(pool, cleanKeywords, etsyResults, missingProviders);
 
-			// 2. SerpAPI Google Search
-			if (progressCallback != null) {
-				progressCallback.accept("Checking Google demand");
-			}
-			if (!serpApiClient.isConfigured()) {
-				missingProviders.add("SerpAPI Google Search (SERPAPI_API_KEY not configured)");
-				missingProviders.add("Google Trends via SerpAPI (SERPAPI_API_KEY not configured)");
-			}
-			else {
-				List<Future<?>> googleFutures = new ArrayList<>();
-				for (String kw : cleanKeywords) {
-					googleFutures.add(pool.submit(() -> {
-						try {
-							googleResults.add(serpApiClient.searchGoogle(kw));
-						}
-						catch (Exception ex) {
-							log.warn("SerpAPI Google lookup failed for '{}': {}", kw, ex.getMessage());
-						}
-					}));
-				}
-				awaitAll(googleFutures);
-				if (googleResults.isEmpty()) {
-					missingProviders.add("SerpAPI Google Search (request failed for all keywords)");
-				}
-
-				// 3. SerpAPI Google Trends
-				if (progressCallback != null) {
-					progressCallback.accept("Reading Trends");
-				}
-				List<Future<?>> trendsFutures = new ArrayList<>();
-				// Limit Trends queries to top 4 keywords to stay fast & within quota
-				for (String kw : cleanKeywords.stream().limit(4).toList()) {
-					trendsFutures.add(pool.submit(() -> {
-						try {
-							trendsResults.add(serpApiClient.fetchGoogleTrends(kw));
-						}
-						catch (Exception ex) {
-							log.warn("SerpAPI Google Trends lookup failed for '{}': {}", kw, ex.getMessage());
-						}
-					}));
-				}
-				awaitAll(trendsFutures);
-				if (trendsResults.isEmpty()) {
-					missingProviders.add("Google Trends via SerpAPI (no timeline data returned)");
-				}
-			}
+			// 2 & 3. Google Search + Google Trends (env-switched: serpapi | playwright)
+			runGoogleAndTrendsPhase(pool, cleanKeywords, googleResults, trendsResults, missingProviders, progressCallback);
 		}
 		finally {
 			pool.shutdownNow();
@@ -135,9 +98,155 @@ public class MarketResearchService {
 			throw new BusinessRuleException(
 					"Market research could not reach any live data provider ("
 							+ String.join("; ", missingProviders)
-							+ "). Set ETSY_API_KEY, APIFY_TOKEN, and/or SERPAPI_API_KEY on relay-server and press Proceed again.");
+							+ "). Check ETSY_API_KEY, APIFY_TOKEN, SERPAPI_API_KEY, or RELAY_WEB_PLAYWRIGHT_WS_ENDPOINT on relay-server and press Proceed again.");
 		}
 		return pack;
+	}
+
+	private void runGoogleAndTrendsPhase(
+			ExecutorService pool,
+			List<String> cleanKeywords,
+			List<GoogleSearchResult> googleResults,
+			List<GoogleTrendsResult> trendsResults,
+			List<String> missingProviders,
+			Consumer<String> progressCallback) {
+		String mode = normalizeGoogleMode(googleProvider);
+
+		if (progressCallback != null) {
+			progressCallback.accept("Checking Google demand");
+		}
+
+		if ("playwright".equals(mode)) {
+			if (!playwrightGoogleClient.isConfigured()) {
+				missingProviders.add("Playwright Google Search (RELAY_MARKET_GOOGLE_PROVIDER not enabled)");
+				missingProviders.add("Playwright Google Trends (RELAY_MARKET_GOOGLE_PROVIDER not enabled)");
+				return;
+			}
+
+			List<Future<?>> googleFutures = new ArrayList<>();
+			for (String kw : cleanKeywords) {
+				googleFutures.add(pool.submit(() -> {
+					try {
+						googleResults.add(playwrightGoogleClient.searchGoogle(kw));
+					}
+					catch (Exception ex) {
+						log.warn("Playwright Google lookup failed for '{}': {}", kw, ex.getMessage());
+					}
+				}));
+			}
+			awaitAll(googleFutures);
+			if (googleResults.isEmpty()) {
+				missingProviders.add("Playwright Google Search (Playwright WS/browser unreachable or failed for all keywords; check RELAY_WEB_PLAYWRIGHT_WS_ENDPOINT)");
+			}
+
+			if (progressCallback != null) {
+				progressCallback.accept("Reading Trends");
+			}
+			List<Future<?>> trendsFutures = new ArrayList<>();
+			for (String kw : cleanKeywords.stream().limit(4).toList()) {
+				trendsFutures.add(pool.submit(() -> {
+					try {
+						trendsResults.add(playwrightGoogleClient.fetchGoogleTrends(kw));
+					}
+					catch (Exception ex) {
+						log.warn("Playwright Google Trends lookup failed for '{}': {}", kw, ex.getMessage());
+					}
+				}));
+			}
+			awaitAll(trendsFutures);
+			if (trendsResults.isEmpty()) {
+				missingProviders.add("Playwright Google Trends (Playwright WS/browser unreachable or no timeline data returned; check RELAY_WEB_PLAYWRIGHT_WS_ENDPOINT)");
+			}
+			return;
+		}
+
+		// Default: serpapi
+		if (!serpApiClient.isConfigured()) {
+			missingProviders.add("SerpAPI Google Search (SERPAPI_API_KEY not configured)");
+			missingProviders.add("Google Trends via SerpAPI (SERPAPI_API_KEY not configured)");
+			return;
+		}
+
+		List<Future<?>> googleFutures = new ArrayList<>();
+		for (String kw : cleanKeywords) {
+			googleFutures.add(pool.submit(() -> {
+				try {
+					googleResults.add(serpApiClient.searchGoogle(kw));
+				}
+				catch (Exception ex) {
+					log.warn("SerpAPI Google lookup failed for '{}': {}", kw, ex.getMessage());
+				}
+			}));
+		}
+		awaitAll(googleFutures);
+		if (googleResults.isEmpty()) {
+			missingProviders.add("SerpAPI Google Search (request failed for all keywords)");
+		}
+
+		if (progressCallback != null) {
+			progressCallback.accept("Reading Trends");
+		}
+		List<Future<?>> trendsFutures = new ArrayList<>();
+		// Limit Trends queries to top 4 keywords to stay fast & within quota
+		for (String kw : cleanKeywords.stream().limit(4).toList()) {
+			trendsFutures.add(pool.submit(() -> {
+				try {
+					trendsResults.add(serpApiClient.fetchGoogleTrends(kw));
+				}
+				catch (Exception ex) {
+					log.warn("SerpAPI Google Trends lookup failed for '{}': {}", kw, ex.getMessage());
+				}
+			}));
+		}
+		awaitAll(trendsFutures);
+		if (trendsResults.isEmpty()) {
+			missingProviders.add("Google Trends via SerpAPI (no timeline data returned)");
+		}
+	}
+
+	private String normalizeGoogleMode(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return "serpapi";
+		}
+		String lower = raw.trim().toLowerCase(Locale.ROOT);
+		if ("playwright".equals(lower)) {
+			return "playwright";
+		}
+		return "serpapi";
+	}
+
+	/**
+	 * Lightweight marketplace-only search (uses the same auto|etsy|apify provider switch)
+	 * for per-format price research. Never throws if providers fail or are unconfigured.
+	 */
+	public Map<String, EtsyKeywordResult> searchMarketplaceKeywords(List<String> keywords) {
+		List<String> cleanKeywords = keywords == null
+				? List.of()
+				: keywords.stream()
+						.filter(k -> k != null && !k.isBlank())
+						.map(String::trim)
+						.distinct()
+						.limit(3)
+						.toList();
+		if (cleanKeywords.isEmpty()) {
+			return Map.of();
+		}
+		List<EtsyKeywordResult> results = new CopyOnWriteArrayList<>();
+		List<String> missing = new CopyOnWriteArrayList<>();
+		ExecutorService pool = Executors.newFixedThreadPool(MAX_CONCURRENCY);
+		try {
+			runMarketplacePhase(pool, cleanKeywords, results, missing);
+		}
+		finally {
+			pool.shutdownNow();
+		}
+		Map<String, EtsyKeywordResult> byKeyword = new LinkedHashMap<>();
+		for (EtsyKeywordResult r : results) {
+			if (r != null && r.keyword() != null) {
+				byKeyword.put(r.keyword(), r);
+			}
+		}
+		return byKeyword;
 	}
 
 	private void runMarketplacePhase(
@@ -145,14 +254,30 @@ public class MarketResearchService {
 			List<String> keywords,
 			List<EtsyKeywordResult> etsyResults,
 			List<String> missingProviders) {
+		List<String> uncachedKeywords = new ArrayList<>();
+		for (String kw : keywords) {
+			var cached = keywordCache.get(kw);
+			if (cached.isPresent()) {
+				etsyResults.add(cached.get());
+			}
+			else {
+				uncachedKeywords.add(kw);
+			}
+		}
+		if (uncachedKeywords.isEmpty()) {
+			return;
+		}
+
 		String mode = normalizeMarketplaceMode(marketplaceProvider);
 
 		if ("etsy".equals(mode)) {
 			if (!etsyClient.isConfigured()) {
-				missingProviders.add("Etsy Open API v3 (ETSY_API_KEY not configured)");
+				if (etsyResults.isEmpty()) {
+					missingProviders.add("Etsy Open API v3 (ETSY_API_KEY not configured)");
+				}
 				return;
 			}
-			List<String> failed = runEtsyQueries(pool, keywords, etsyResults);
+			List<String> failed = runEtsyQueries(pool, uncachedKeywords, etsyResults);
 			if (etsyResults.isEmpty() && !failed.isEmpty()) {
 				missingProviders.add("Etsy Open API v3 (request failed for all keywords)");
 			}
@@ -161,10 +286,12 @@ public class MarketResearchService {
 
 		if ("apify".equals(mode)) {
 			if (!apifyClient.isConfigured()) {
-				missingProviders.add("Etsy via Apify (APIFY_TOKEN not configured)");
+				if (etsyResults.isEmpty()) {
+					missingProviders.add("Etsy via Apify (APIFY_TOKEN not configured)");
+				}
 				return;
 			}
-			runApifyQueries(pool, keywords, etsyResults);
+			runApifyQueries(pool, uncachedKeywords, etsyResults);
 			if (etsyResults.isEmpty()) {
 				missingProviders.add("Etsy via Apify (request failed for all keywords)");
 			}
@@ -175,16 +302,18 @@ public class MarketResearchService {
 		boolean etsyReady = etsyClient.isConfigured();
 		boolean apifyReady = apifyClient.isConfigured();
 		if (!etsyReady && !apifyReady) {
-			missingProviders.add("Etsy Marketplace (neither ETSY_API_KEY nor APIFY_TOKEN configured)");
+			if (etsyResults.isEmpty()) {
+				missingProviders.add("Etsy Marketplace (neither ETSY_API_KEY nor APIFY_TOKEN configured)");
+			}
 			return;
 		}
 
 		List<String> fallbackKeywords;
 		if (etsyReady) {
-			fallbackKeywords = runEtsyQueries(pool, keywords, etsyResults);
+			fallbackKeywords = runEtsyQueries(pool, uncachedKeywords, etsyResults);
 		}
 		else {
-			fallbackKeywords = keywords;
+			fallbackKeywords = uncachedKeywords;
 		}
 
 		if (!fallbackKeywords.isEmpty() && apifyReady) {
@@ -213,7 +342,9 @@ public class MarketResearchService {
 		for (String kw : keywords) {
 			futures.add(pool.submit(() -> {
 				try {
-					etsyResults.add(etsyClient.searchActiveListings(kw));
+					EtsyKeywordResult res = etsyClient.searchActiveListings(kw);
+					keywordCache.put(kw, res);
+					etsyResults.add(res);
 				}
 				catch (Exception ex) {
 					log.warn("Etsy Open API lookup failed for '{}': {}", kw, ex.getMessage());
@@ -233,7 +364,9 @@ public class MarketResearchService {
 		for (String kw : keywords) {
 			futures.add(pool.submit(() -> {
 				try {
-					etsyResults.add(apifyClient.searchActiveListings(kw));
+					EtsyKeywordResult res = apifyClient.searchActiveListings(kw);
+					keywordCache.put(kw, res);
+					etsyResults.add(res);
 				}
 				catch (Exception ex) {
 					log.warn("Apify Etsy lookup failed for '{}': {}", kw, ex.getMessage());

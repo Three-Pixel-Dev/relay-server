@@ -86,6 +86,14 @@ public class RelayProduct extends MasterEntity {
 	@Column(name = "voice_approved", nullable = false)
 	private boolean voiceApproved = false;
 
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "type_price_suggestions_json", columnDefinition = "jsonb")
+	private String typePriceSuggestionsJson;
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "market_research_json", columnDefinition = "jsonb")
+	private String marketResearchJson;
+
 	@Column(name = "cancelled", nullable = false)
 	private boolean cancelled = false;
 }

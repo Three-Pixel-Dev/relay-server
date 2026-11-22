@@ -34,7 +34,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ApifyEtsySearchClient {
 
-	private static final int SAMPLE_LIMIT = 25;
+	private static final int SAMPLE_LIMIT = 12;
 	private static final String APIFY_BASE_URL = "https://api.apify.com/v2/acts/";
 
 	private final ObjectMapper objectMapper;

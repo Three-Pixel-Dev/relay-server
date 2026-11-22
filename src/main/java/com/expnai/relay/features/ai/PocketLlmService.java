@@ -71,12 +71,12 @@ public class PocketLlmService {
 						if (!kw.isEmpty() && kw.length() <= 60) {
 							keywords.add(kw);
 						}
-						if (keywords.size() >= 5) {
+						if (keywords.size() >= 3) {
 							break;
 						}
 					}
 				}
-				if (keywords.size() >= 3) {
+				if (keywords.size() >= 2) {
 					return List.copyOf(keywords);
 				}
 			}
@@ -107,10 +107,10 @@ public class PocketLlmService {
 		StringBuilder sb = new StringBuilder();
 		sb.append("""
 				You are a digital product market researcher.
-				Given the product context below, return 4 concise buyer-intent search keywords (2-5 words each) suitable for querying Etsy digital products, Google Search, and Google Trends.
+				Given the product context below, return 3 concise buyer-intent search keywords (2-5 words each) suitable for querying Etsy digital products, Google Search, and Google Trends.
 				Return ONLY valid JSON:
 				{
-				  "keywords": ["keyword 1", "keyword 2", "keyword 3", "keyword 4"]
+				  "keywords": ["keyword 1", "keyword 2", "keyword 3"]
 				}
 				""");
 		appendProductContext(sb, product, profile);
@@ -235,7 +235,7 @@ public class PocketLlmService {
 			keywords.add("printable workbook pdf");
 			keywords.add("step by step guide");
 		}
-		return keywords.stream().limit(4).toList();
+		return keywords.stream().limit(3).toList();
 	}
 
 	private List<GeneratedPocket> parsePocketsResponse(String rawJson, boolean hasProfile) {

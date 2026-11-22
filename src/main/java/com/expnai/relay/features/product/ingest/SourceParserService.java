@@ -1,5 +1,7 @@
 package com.expnai.relay.features.product.ingest;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -18,8 +20,11 @@ import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.imageio.ImageIO;
+
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
@@ -37,6 +42,7 @@ import org.springframework.stereotype.Service;
 
 import com.expnai.relay.domain.entity.RelaySource;
 import com.expnai.relay.domain.enums.RelaySourceKind;
+import com.expnai.relay.features.ai.GeminiPdfOcrClient;
 import com.expnai.relay.features.ai.GeminiUrlContextFetchService;
 import com.expnai.relay.features.product.storage.FileStorageService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -53,6 +59,9 @@ public class SourceParserService {
 	private static final int CHUNK_TARGET_CHARS = 2200; // ~550 tokens
 	private static final int CHUNK_OVERLAP_CHARS = 220;
 	private static final int MAX_YOUTUBE_VIDEOS = 30;
+	private static final int PDF_OCR_MIN_CHARS = 40;
+	private static final float PDF_OCR_DPI = 150f;
+	private static final int PDF_OCR_MAX_PAGES = 40;
 
 	private static final List<String> MEDIA_EXTENSIONS = List.of(
 			".mp3", ".mp4", ".wav", ".m4a", ".mov", ".webm", ".ogg", ".flac", ".avi", ".mkv");
@@ -69,6 +78,7 @@ public class SourceParserService {
 	private final FileStorageService fileStorageService;
 	private final PlaywrightWebFetchService playwrightWebFetchService;
 	private final GeminiUrlContextFetchService geminiUrlContextFetchService;
+	private final GeminiPdfOcrClient geminiPdfOcrClient;
 	private final ObjectMapper objectMapper;
 
 	@Value("${youtube.api.key:}")
@@ -89,12 +99,21 @@ public class SourceParserService {
 	}
 
 	public ParseResult parseSource(RelaySource source, String chatApiKey, Consumer<String> progressCallback) {
+		Long productId = source != null && source.getProduct() != null ? source.getProduct().getId() : null;
+		return parseSource(source, chatApiKey, progressCallback, productId);
+	}
+
+	public ParseResult parseSource(
+			RelaySource source,
+			String chatApiKey,
+			Consumer<String> progressCallback,
+			Long productId) {
 		RelaySourceKind kind = source.getKind();
 		if (kind == RelaySourceKind.FILE) {
-			return parseFileSource(source);
+			return parseFileSource(source, chatApiKey, progressCallback, productId);
 		}
 		if (kind == RelaySourceKind.WEB) {
-			return parseWebSource(source, chatApiKey, progressCallback);
+			return parseWebSource(source, chatApiKey, progressCallback, productId);
 		}
 		if (kind == RelaySourceKind.YOUTUBE) {
 			return parseYoutubeSource(source);
@@ -102,7 +121,11 @@ public class SourceParserService {
 		return new ParseResult(List.of(), 0, 0);
 	}
 
-	private ParseResult parseFileSource(RelaySource source) {
+	private ParseResult parseFileSource(
+			RelaySource source,
+			String chatApiKey,
+			Consumer<String> progressCallback,
+			Long productId) {
 		String name = source.getName() != null ? source.getName() : "document.txt";
 		String lower = name.toLowerCase(Locale.ROOT);
 		for (String ext : MEDIA_EXTENSIONS) {
@@ -120,7 +143,7 @@ public class SourceParserService {
 		try {
 			byte[] header = readHeaderBytes(path, 8);
 			if (lower.endsWith(".pdf") && isPdfMagic(header)) {
-				List<PassageChunk> chunks = parsePdf(path, name);
+				List<PassageChunk> chunks = parsePdf(path, name, chatApiKey, progressCallback, productId);
 				return new ParseResult(chunks, 0, 1);
 			}
 			if (lower.endsWith(".docx") && isZipMagic(header)) {
@@ -143,15 +166,69 @@ public class SourceParserService {
 		}
 	}
 
-	private List<PassageChunk> parsePdf(Path path, String sourceName) throws IOException {
+	private List<PassageChunk> parsePdf(
+			Path path,
+			String sourceName,
+			String chatApiKey,
+			Consumer<String> progressCallback,
+			Long productId) throws IOException {
 		List<PassageChunk> chunks = new ArrayList<>();
+		boolean missingKeyForOcr = false;
+		int ocrPagesDone = 0;
+		boolean announcedOcrCap = false;
+
 		try (PDDocument doc = Loader.loadPDF(path.toFile())) {
 			PDFTextStripper stripper = new PDFTextStripper();
+			PDFRenderer renderer = null;
 			int totalPages = doc.getNumberOfPages();
 			for (int page = 1; page <= totalPages; page++) {
 				stripper.setStartPage(page);
 				stripper.setEndPage(page);
 				String pageText = normalizeWhitespace(stripper.getText(doc));
+
+				if (pageText.length() < PDF_OCR_MIN_CHARS) {
+					if (ocrPagesDone >= PDF_OCR_MAX_PAGES) {
+						if (!announcedOcrCap) {
+							announcedOcrCap = true;
+							log.info("Reached {}-page OCR cap for {} (total pages={})",
+									PDF_OCR_MAX_PAGES, sourceName, totalPages);
+							if (progressCallback != null) {
+								progressCallback.accept(
+										"Reached " + PDF_OCR_MAX_PAGES + "-page OCR limit for " + sourceName
+												+ "; keeping extracted pages");
+							}
+						}
+					}
+					else if (chatApiKey == null || chatApiKey.isBlank()) {
+						missingKeyForOcr = true;
+					}
+					else {
+						if (progressCallback != null) {
+							progressCallback.accept("OCR page " + page + "/" + totalPages + " of " + sourceName + "…");
+						}
+						try {
+							if (renderer == null) {
+								renderer = new PDFRenderer(doc);
+							}
+							BufferedImage image = renderer.renderImageWithDPI(page - 1, PDF_OCR_DPI);
+							ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
+							ImageIO.write(image, "png", pngOut);
+							String ocrText = normalizeWhitespace(
+									geminiPdfOcrClient.extractPageText(
+											chatApiKey, pngOut.toByteArray(), page, productId));
+							ocrPagesDone++;
+							if (ocrText.length() > pageText.length()) {
+								pageText = ocrText;
+							}
+						}
+						catch (Exception ocrEx) {
+							ocrPagesDone++;
+							log.warn("Gemini OCR failed on page {}/{} of {}: {}",
+									page, totalPages, sourceName, ocrEx.getMessage());
+						}
+					}
+				}
+
 				if (pageText.isBlank()) {
 					continue;
 				}
@@ -162,6 +239,10 @@ public class SourceParserService {
 			}
 		}
 		if (chunks.isEmpty()) {
+			if (missingKeyForOcr) {
+				throw new IllegalArgumentException(
+						"Scanned PDF " + sourceName + " requires a Google Gemini API key (AIza…) for OCR.");
+			}
 			throw new IllegalArgumentException("No extractable text found in PDF " + sourceName);
 		}
 		return chunks;
@@ -254,7 +335,11 @@ public class SourceParserService {
 		return chunks;
 	}
 
-	private ParseResult parseWebSource(RelaySource source, String chatApiKey, Consumer<String> progressCallback) {
+	private ParseResult parseWebSource(
+			RelaySource source,
+			String chatApiKey,
+			Consumer<String> progressCallback,
+			Long productId) {
 		String rawUrl = source.getUrl() != null ? source.getUrl().trim() : "";
 		if (rawUrl.isEmpty()) {
 			throw new IllegalArgumentException("Missing URL for web source " + source.getName());
@@ -300,8 +385,10 @@ public class SourceParserService {
 				progressCallback.accept("Browser could not read " + displayName + "; trying Gemini URL read");
 			}
 			try {
-				Long productId = source.getProduct() != null ? source.getProduct().getId() : null;
-				String geminiText = geminiUrlContextFetchService.extractPageText(chatApiKey, fullUrl, productId, 0);
+				Long resolvedProductId = productId != null
+						? productId
+						: (source.getProduct() != null ? source.getProduct().getId() : null);
+				String geminiText = geminiUrlContextFetchService.extractPageText(chatApiKey, fullUrl, resolvedProductId, 0);
 				combined = normalizeWhitespace(geminiText);
 			}
 			catch (Exception geminiEx) {

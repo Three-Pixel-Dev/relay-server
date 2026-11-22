@@ -183,7 +183,8 @@ public class SourceIngestionWorker {
 				ParseResult parsed = sourceParserService.parseSource(
 						source,
 						chatApiKey,
-						line -> addProgress(productId, progressLines, line));
+						line -> addProgress(productId, progressLines, line),
+						productId);
 				if (!addedIndexingProgress) {
 					addProgress(productId, progressLines, "Indexing passages so every section can cite them");
 					addedIndexingProgress = true;
@@ -503,7 +504,12 @@ public class SourceIngestionWorker {
 	}
 
 	private void addProgress(Long productId, List<String> progressLines, String newLine) {
-		progressLines.add(newLine);
+		if (!progressLines.isEmpty() && isSameOcrProgressLine(progressLines.get(progressLines.size() - 1), newLine)) {
+			progressLines.set(progressLines.size() - 1, newLine);
+		}
+		else {
+			progressLines.add(newLine);
+		}
 		transactionTemplate.executeWithoutResult(status -> {
 			productRepository.findById(productId).ifPresent(product -> {
 				try {
@@ -519,6 +525,18 @@ public class SourceIngestionWorker {
 				"progress",
 				Map.of("progress", List.copyOf(progressLines), "stepStatus", "running"),
 				false);
+	}
+
+	private boolean isSameOcrProgressLine(String previous, String next) {
+		if (previous == null || next == null) {
+			return false;
+		}
+		if (!previous.startsWith("OCR page ") || !next.startsWith("OCR page ")) {
+			return false;
+		}
+		int prevOf = previous.indexOf(" of ");
+		int nextOf = next.indexOf(" of ");
+		return prevOf > 0 && nextOf > 0 && previous.substring(prevOf).equals(next.substring(nextOf));
 	}
 
 	private void markSourceReading(Long sourceId, Long productId) {

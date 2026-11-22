@@ -35,6 +35,7 @@ import com.expnai.relay.features.product.dto.response.RelayProductResponse.Sourc
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.SourceProfileDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ThemeDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ThreadMessageDto;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.TypePriceSuggestionDto;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -48,6 +49,13 @@ public class RelayProductMapper {
 
 	private final ObjectMapper objectMapper;
 	private final AiPricingService aiPricingService;
+
+	public RelayProductResponse toListDto(
+			RelayProduct product,
+			RelaySourceProfile profile,
+			RelayBrand brand) {
+		return toDto(product, List.of(), profile, List.of(), List.of(), List.of(), brand, List.of(), List.of());
+	}
 
 	public RelayProductResponse toDto(
 			RelayProduct product,
@@ -192,6 +200,9 @@ public class RelayProductMapper {
 				.estimateRemainingUsd(product, sourceDtos.size(), sectionDtos.size(), doneSectionCount)
 				.orElse(null);
 
+		Map<String, TypePriceSuggestionDto> typePriceSuggestions = parseTypePriceSuggestions(
+				product.getTypePriceSuggestionsJson());
+
 		return new RelayProductResponse(
 				String.valueOf(product.getId()),
 				product.getName() != null ? product.getName() : "",
@@ -206,6 +217,7 @@ public class RelayProductMapper {
 				pocketDtos,
 				chosenPocketDto,
 				type,
+				typePriceSuggestions,
 				sectionDtos,
 				product.getWordCount() != null ? product.getWordCount() : 0,
 				brand != null ? toBrandDto(product, brand) : null,
@@ -398,6 +410,21 @@ public class RelayProductMapper {
 			}
 		}
 		return steps;
+	}
+
+	private Map<String, TypePriceSuggestionDto> parseTypePriceSuggestions(String json) {
+		if (json == null || json.isBlank()) {
+			return Map.of();
+		}
+		try {
+			Map<String, TypePriceSuggestionDto> parsed = objectMapper.readValue(
+					json, new TypeReference<Map<String, TypePriceSuggestionDto>>() {
+					});
+			return parsed != null ? parsed : Map.of();
+		}
+		catch (Exception ignored) {
+			return Map.of();
+		}
 	}
 
 	private List<String> parseProgress(String progressJson) {

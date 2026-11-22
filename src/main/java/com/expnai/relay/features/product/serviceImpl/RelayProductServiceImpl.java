@@ -75,6 +75,7 @@ import com.expnai.relay.features.product.export.ReadyExportWorker;
 import com.expnai.relay.features.product.ingest.BrandingGenerationWorker;
 import com.expnai.relay.features.product.ingest.ManuscriptGenerationWorker;
 import com.expnai.relay.features.product.ingest.PocketGenerationWorker;
+import com.expnai.relay.features.product.ingest.ProductTypePriceWorker;
 import com.expnai.relay.features.product.ingest.SourceIngestionWorker;
 import com.expnai.relay.features.product.ingest.StructureGenerationWorker;
 import com.expnai.relay.features.product.mapper.RelayProductMapper;
@@ -119,6 +120,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	private final AiPricingService aiPricingService;
 	private final SourceIngestionWorker sourceIngestionWorker;
 	private final PocketGenerationWorker pocketGenerationWorker;
+	private final ProductTypePriceWorker productTypePriceWorker;
 	private final StructureGenerationWorker structureGenerationWorker;
 	private final ManuscriptGenerationWorker manuscriptGenerationWorker;
 	private final BrandingGenerationWorker brandingGenerationWorker;
@@ -132,7 +134,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 		Long userId = currentUserId();
 		List<RelayProductResponse> products = productRepository.findByUserIdOrderByCreatedAtDesc(userId)
 				.stream()
-				.map(this::toResponse)
+				.map(this::toListResponse)
 				.toList();
 		return ApiResponse.ok("OK", products);
 	}
@@ -319,7 +321,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	@Transactional
 	public ApiResponse<RelayProductResponse> proceed(Long productId) {
 		RelayUser user = requireCurrentUser();
-		RelayProduct product = requireOwnedProduct(productId);
+		RelayProduct product = requireOwnedProductForUpdate(productId);
 
 		if (product.getStage() != RelayProductStage.BUILD || "running".equals(product.getStepStatus())) {
 			return ApiResponse.ok("OK", toResponse(product));
@@ -450,14 +452,45 @@ public class RelayProductServiceImpl implements RelayProductService {
 		}
 
 		if (product.getBuildStep() == 2) {
-			product.setStepStatus("review");
-			product.setStepProgress(null);
-			product = productRepository.save(product);
-			if (product.getProductType() == null) {
-				saveThreadMessage(product, RelayThreadWho.RELAY,
-						"What shape should it take? Planners and workbooks sell most on Etsy; a guide teaches best; a checklist makes a strong lead magnet.");
+			if (product.getTypePriceSuggestionsJson() != null && !product.getTypePriceSuggestionsJson().isBlank()) {
+				product.setStepStatus("review");
+				product.setStepProgress(null);
+				product = productRepository.save(product);
+				if (product.getProductType() == null) {
+					saveThreadMessage(product, RelayThreadWho.RELAY,
+							"What shape should it take? Planners and workbooks sell most on Etsy; a guide teaches best; a checklist makes a strong lead magnet.");
+				}
+				return ApiResponse.ok("Awaiting product type selection", toResponse(product));
 			}
-			return ApiResponse.ok("Awaiting product type selection", toResponse(product));
+
+			String resolvedChatKey = "";
+			try {
+				resolvedChatKey = aiCredentialService.requireChatModelKey(user.getId());
+			}
+			catch (BusinessRuleException ignored) {
+			}
+			final String chatKey = resolvedChatKey;
+
+			product.setCancelled(false);
+			product.setStepStatus("running");
+			product.setStepProgress("[\"Checking live marketplace prices for each format\"]");
+			product = productRepository.saveAndFlush(product);
+
+			final Long pid = product.getId();
+			final Long uid = user.getId();
+			if (TransactionSynchronizationManager.isSynchronizationActive()) {
+				TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+					@Override
+					public void afterCommit() {
+						productTypePriceWorker.suggestPricesAsync(pid, uid, chatKey);
+					}
+				});
+			}
+			else {
+				productTypePriceWorker.suggestPricesAsync(pid, uid, chatKey);
+			}
+
+			return ApiResponse.ok("Checking live marketplace prices", toResponse(product));
 		}
 
 		if (product.getBuildStep() == 3) {
@@ -616,7 +649,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	@Transactional
 	public ApiResponse<RelayProductResponse> continueQualityGate(Long productId) {
 		RelayUser user = requireCurrentUser();
-		RelayProduct product = requireOwnedProduct(productId);
+		RelayProduct product = requireOwnedProductForUpdate(productId);
 
 		if (product.getStage() != RelayProductStage.BUILD || product.getBuildStep() != 0) {
 			return ApiResponse.ok("OK", toResponse(product));
@@ -659,7 +692,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	@Transactional
 	public ApiResponse<RelayProductResponse> approve(Long productId) {
 		RelayUser user = requireCurrentUser();
-		RelayProduct product = requireOwnedProduct(productId);
+		RelayProduct product = requireOwnedProductForUpdate(productId);
 
 		String currentStatus = product.getStepStatus();
 		if (!"review".equals(currentStatus) && !"gate".equals(currentStatus)) {
@@ -792,6 +825,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 		saveThreadMessage(product, RelayThreadWho.YOU, "Picked: **" + pocket.getNiche() + "**");
 
 		product.setChosenPocket(pocket);
+		product.setTypePriceSuggestionsJson(null);
 		product.setBuildStep(2);
 		product.setStepStatus("todo");
 		product.setStepProgress(null);
@@ -799,7 +833,8 @@ public class RelayProductServiceImpl implements RelayProductService {
 		product = productRepository.save(product);
 
 		saveThreadMessage(product, RelayThreadWho.RELAY,
-				"Next: **Product type**. Pick the format that fits **" + pocket.getNiche() + "** best.");
+				"Next: **Product type**. Press Proceed to check live marketplace prices and pick the format that fits **"
+						+ pocket.getNiche() + "** best.");
 
 		return ApiResponse.ok("Pocket chosen", toResponse(product));
 	}
@@ -914,7 +949,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	@Transactional
 	public ApiResponse<RelayProductResponse> regenerateSection(Long productId, Long sectionId) {
 		RelayUser user = requireCurrentUser();
-		RelayProduct product = requireOwnedProduct(productId);
+		RelayProduct product = requireOwnedProductForUpdate(productId);
 		String prevStatus = product.getStepStatus();
 		if (product.getStage() != RelayProductStage.BUILD
 				|| product.getBuildStep() != 4
@@ -1011,11 +1046,14 @@ public class RelayProductServiceImpl implements RelayProductService {
 		}
 		else if (product.getBuildStep() == 1) {
 			product.setChosenPocket(null);
+			product.setMarketResearchJson(null);
+			product.setTypePriceSuggestionsJson(null);
 			productRepository.saveAndFlush(product);
 			pocketRepository.deleteHardByProductId(productId);
 		}
 		else if (product.getBuildStep() == 2) {
 			product.setProductType(null);
+			product.setTypePriceSuggestionsJson(null);
 		}
 		else if (product.getBuildStep() == 3) {
 			citationRepository.deleteHardByProductId(productId);
@@ -1307,6 +1345,12 @@ public class RelayProductServiceImpl implements RelayProductService {
 		}
 	}
 
+	private RelayProductResponse toListResponse(RelayProduct product) {
+		RelaySourceProfile profile = sourceProfileRepository.findByProductId(product.getId()).orElse(null);
+		RelayBrand brand = brandRepository.findByProductId(product.getId()).orElse(null);
+		return productMapper.toListDto(product, profile, brand);
+	}
+
 	private RelayProductResponse toResponse(RelayProduct product) {
 		List<RelaySource> sources = sourceRepository.findByProductIdOrderByCreatedAtAsc(product.getId());
 		RelaySourceProfile profile = sourceProfileRepository.findByProductId(product.getId()).orElse(null);
@@ -1390,6 +1434,11 @@ public class RelayProductServiceImpl implements RelayProductService {
 
 	private RelayProduct requireOwnedProduct(Long productId) {
 		return productRepository.findByIdAndUserId(productId, currentUserId())
+				.orElseThrow(() -> new ResourceNotFoundException("Product not found"));
+	}
+
+	private RelayProduct requireOwnedProductForUpdate(Long productId) {
+		return productRepository.findByIdAndUserIdForUpdate(productId, currentUserId())
 				.orElseThrow(() -> new ResourceNotFoundException("Product not found"));
 	}
 

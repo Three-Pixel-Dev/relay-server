@@ -139,6 +139,16 @@ public class PocketGenerationWorker {
 				pocketRepository.save(entity);
 			}
 
+			try {
+				Map<String, Object> persistedPack = Map.of(
+						"queriedAt", pack.queriedAt(),
+						"keywords", pack.keywords(),
+						"etsyResults", pack.etsyResults());
+				product.setMarketResearchJson(objectMapper.writeValueAsString(persistedPack));
+			}
+			catch (Exception ignored) {
+			}
+			product.setTypePriceSuggestionsJson(null);
 			product.setStepProgress(null);
 			product.setStepStatus("review");
 			productRepository.save(product);

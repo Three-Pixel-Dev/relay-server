@@ -83,6 +83,12 @@ public class PgVectorDatabaseConfig {
 				if (columnUdtName(conn, "relay_product", "voice_approved") == null) {
 					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS voice_approved BOOLEAN NOT NULL DEFAULT false");
 				}
+				if (columnUdtName(conn, "relay_product", "type_price_suggestions_json") == null) {
+					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS type_price_suggestions_json JSONB");
+				}
+				if (columnUdtName(conn, "relay_product", "market_research_json") == null) {
+					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS market_research_json JSONB");
+				}
 				if (columnUdtName(conn, "relay_product", "spend") != null) {
 					stmt.execute("ALTER TABLE relay_product ALTER COLUMN spend TYPE NUMERIC(12,6)");
 				}

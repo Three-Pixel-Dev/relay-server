@@ -30,6 +30,9 @@ public class AiPricingService {
 	private static final int POCKETS_EST_INPUT_TOKENS = 25_000;
 	private static final int POCKETS_EST_OUTPUT_TOKENS = 4_000;
 
+	private static final int TYPE_PRICES_EST_INPUT_TOKENS = 4_000;
+	private static final int TYPE_PRICES_EST_OUTPUT_TOKENS = 600;
+
 	private static final int STRUCTURE_EST_INPUT_TOKENS = 20_000;
 	private static final int STRUCTURE_EST_OUTPUT_TOKENS = 2_500;
 
@@ -113,7 +116,11 @@ public class AiPricingService {
 			totalIn += POCKETS_EST_INPUT_TOKENS;
 			totalOut += POCKETS_EST_OUTPUT_TOKENS;
 		}
-		// Step 2: Product type ($0 AI)
+		// Step 2: Product type (live marketplace price suggestions)
+		if (cur < 2 || (cur == 2 && !currentCompleted)) {
+			totalIn += TYPE_PRICES_EST_INPUT_TOKENS;
+			totalOut += TYPE_PRICES_EST_OUTPUT_TOKENS;
+		}
 		// Step 3: Structure
 		if (cur < 3 || (cur == 3 && !currentCompleted)) {
 			totalIn += STRUCTURE_EST_INPUT_TOKENS;

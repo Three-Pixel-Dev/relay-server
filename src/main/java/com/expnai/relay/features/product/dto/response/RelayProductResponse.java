@@ -21,6 +21,7 @@ public record RelayProductResponse(
 		List<PocketDto> pockets,
 		PocketDto pocket,
 		String type,
+		Map<String, TypePriceSuggestionDto> typePriceSuggestions,
 		List<SectionDto> structure,
 		int words,
 		BrandDto brand,
@@ -100,6 +101,15 @@ public record RelayProductResponse(
 			List<String> src,
 			boolean rec,
 			boolean grounded
+	) {
+	}
+
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	public record TypePriceSuggestionDto(
+			String price,
+			BigDecimal median,
+			String rationale,
+			String source
 	) {
 	}
 
