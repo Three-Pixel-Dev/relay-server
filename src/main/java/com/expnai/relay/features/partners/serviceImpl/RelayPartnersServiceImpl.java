@@ -102,7 +102,7 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 	private final GmailSendService gmailSendService;
 
 	@Override
-	@Transactional(readOnly = true)
+	@Transactional
 	public ApiResponse<RelayPartnersOverviewResponse> overview() {
 		RelayUser user = requireCurrentUser();
 		return ApiResponse.ok("OK", buildOverview(user));
