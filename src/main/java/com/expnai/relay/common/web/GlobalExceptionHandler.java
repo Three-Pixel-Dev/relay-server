@@ -17,6 +17,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.expnai.relay.common.exception.BadGatewayException;
 import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
 import com.expnai.relay.common.exception.ResourceConflictException;
@@ -41,6 +42,11 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ApiResponse<Void>> handleBusinessRule(BusinessRuleException ex) {
 		return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT)
 				.body(ApiResponse.fail(422, ex.getMessage(), null));
+	}
+
+	@ExceptionHandler(BadGatewayException.class)
+	public ResponseEntity<ApiResponse<Void>> handleBadGateway(BadGatewayException ex) {
+		return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ApiResponse.fail(502, ex.getMessage(), null));
 	}
 
 	@ExceptionHandler(InvalidSessionException.class)
