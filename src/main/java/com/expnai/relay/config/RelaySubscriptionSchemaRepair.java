@@ -2,6 +2,7 @@ package com.expnai.relay.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.Ordered;
@@ -10,9 +11,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * Hibernate {@code ddl-auto=update} does not refresh PostgreSQL enum CHECK constraints.
+ * Hibernate `ddl-auto=update` does not refresh PostgreSQL enum CHECK constraints.
  * The plan enum was renamed MONTHLY → SIX_MONTHS after the table was first created, so inserts
- * of SIX_MONTHS fail with {@code relay_subscription_plan_check} until this repair runs.
+ * of SIX_MONTHS fail with `relay_subscription_plan_check` until this repair runs.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -20,14 +21,18 @@ public class RelaySubscriptionSchemaRepair implements ApplicationRunner {
 
 	private static final Logger log = LoggerFactory.getLogger(RelaySubscriptionSchemaRepair.class);
 
-	private final JdbcTemplate jdbcTemplate;
+	private final ObjectProvider<JdbcTemplate> jdbcTemplateProvider;
 
-	public RelaySubscriptionSchemaRepair(JdbcTemplate jdbcTemplate) {
-		this.jdbcTemplate = jdbcTemplate;
+	public RelaySubscriptionSchemaRepair(ObjectProvider<JdbcTemplate> jdbcTemplateProvider) {
+		this.jdbcTemplateProvider = jdbcTemplateProvider;
 	}
 
 	@Override
 	public void run(ApplicationArguments args) {
+		JdbcTemplate jdbcTemplate = jdbcTemplateProvider.getIfAvailable();
+		if (jdbcTemplate == null) {
+			return;
+		}
 		try {
 			jdbcTemplate.execute(
 					"ALTER TABLE relay_subscription DROP CONSTRAINT IF EXISTS relay_subscription_plan_check");
@@ -47,7 +52,8 @@ public class RelaySubscriptionSchemaRepair implements ApplicationRunner {
 					""");
 
 			log.info("Repaired relay_subscription plan/status check constraints");
-		} catch (Exception ex) {
+		}
+		catch (Exception ex) {
 			log.warn("Could not repair relay_subscription check constraints: {}", ex.getMessage());
 		}
 	}

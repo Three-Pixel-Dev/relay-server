@@ -7,4 +7,6 @@ import com.expnai.relay.domain.entity.RelaySuppression;
 
 @Repository
 public interface RelaySuppressionRepository extends BaseRepository<RelaySuppression> {
+
+	boolean existsByUserIdAndEmailIgnoreCase(Long userId, String email);
 }
