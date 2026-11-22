@@ -1,19 +1,36 @@
 package com.expnai.relay;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 
-@SpringBootTest
+import com.expnai.relay.common.security.TokenEncryptionService;
+
+/**
+ * Lightweight smoke: AES token encryption wiring without a database or full servlet context.
+ */
+@SpringBootTest(
+		classes = TokenEncryptionService.class,
+		webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @TestPropertySource(properties = {
-		"spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration",
-		"jwt.secret=relay-test-secret-change-me-please-32chars",
-		"app.security.mode=permit_all"
+		"relay.token-encryption.key=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+		"relay.token-encryption.key-version=1"
 })
 class RelayApplicationTests {
 
+	@Autowired
+	private TokenEncryptionService tokenEncryptionService;
+
 	@Test
 	void contextLoads() {
+		assertTrue(tokenEncryptionService.isConfigured());
+		String cipher = tokenEncryptionService.encrypt("smoke-token");
+		assertTrue(cipher.startsWith("enc:v1:"));
+		assertEquals("smoke-token", tokenEncryptionService.decrypt(cipher));
 	}
 
 }
