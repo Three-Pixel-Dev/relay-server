@@ -46,7 +46,7 @@ public record RelayProductResponse(
 	public RelayProductResponse withCommerce(List<Object> newOrders, PublishStateDto newPublish, MetricsDto newMetrics) {
 		return new RelayProductResponse(
 				id, name, input, mode, forElse, client, partnerId, sources, profile,
-				newOrders, pockets, pocket, type, structure, words, brand, files, stage, cur, steps, thread,
+				newOrders, pockets, pocket, type, typePriceSuggestions, structure, words, brand, files, stage, cur, steps, thread,
 				newPublish, distribute, promote, newMetrics, spend, remainingEstimate, pricingAvailable,
 				pricingMessage, qualityWarning, cancelled, created, updated);
 	}
