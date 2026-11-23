@@ -153,7 +153,16 @@ public class SourceIngestionWorker {
 					.filter(s -> s.getKind() == RelaySourceKind.FILE)
 					.filter(s -> FfmpegAudioService.isMediaFilename(s.getName()))
 					.count();
-			if (mediaCount > 0 && mediaCount == fileCount) {
+			long videoCount = sources.stream()
+					.filter(s -> s.getKind() == RelaySourceKind.FILE)
+					.filter(s -> FfmpegAudioService.isVideoFilename(s.getName()))
+					.count();
+			if (videoCount > 0 && videoCount == fileCount) {
+				addProgress(productId, progressLines,
+						"Transcribing audio and selecting unique scenes from "
+								+ videoCount + " video" + (videoCount > 1 ? "s" : ""));
+			}
+			else if (mediaCount > 0 && mediaCount == fileCount) {
 				addProgress(productId, progressLines,
 						"Transcribing " + mediaCount + " audio file" + (mediaCount > 1 ? "s" : "")
 								+ " and splitting into passages");
