@@ -19,7 +19,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Dev/staging auto-bootstrapper for pgvector extension, column type migration, and HNSW index.
  * For production (Neon), apply {@code classpath:db/migration/V1__phase1_pgvector_and_sources.sql}
- * and set {@code RELAY_PGVECTOR_AUTO_MIGRATE=false}.
+ * and set {@code RELAY_PGVECTOR_AUTO_MIGRATE=false} must do.
  */
 @Configuration
 @ConditionalOnProperty(name = "relay.pgvector.auto-migrate", havingValue = "true", matchIfMissing = true)
