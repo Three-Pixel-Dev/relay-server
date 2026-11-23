@@ -71,7 +71,9 @@ public class JakartaImapInboxReader implements ImapInboxReader {
 			}
 		}
 		catch (MessagingException | IOException ex) {
-			throw new BadGatewayException("Could not read the mailbox over IMAP: " + ex.getClass().getSimpleName());
+			String reason = ex.getMessage() == null ? "" : ex.getMessage().replaceAll("\\s+", " ");
+			throw new BadGatewayException("Could not read the mailbox over IMAP: " + ex.getClass().getSimpleName()
+					+ (reason.isBlank() ? "" : " - " + reason.substring(0, Math.min(reason.length(), 200))));
 		}
 	}
 
