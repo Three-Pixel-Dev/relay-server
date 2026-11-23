@@ -70,7 +70,7 @@ import com.expnai.relay.features.partners.dto.response.RelayScoutResultResponse;
 import com.expnai.relay.features.partners.dto.response.RelaySendOutreachResponse;
 import com.expnai.relay.features.partners.mail.RelayOutreachMailService;
 import com.expnai.relay.features.partners.mapper.RelayPartnersMapper;
-import com.expnai.relay.features.partners.scout.RelayScoutCatalog;
+import com.expnai.relay.features.partners.scout.RelayCreatorScoutService;
 import com.expnai.relay.features.partners.service.RelayPartnersService;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.mapper.RelayProductMapper;
@@ -96,7 +96,7 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 	private final RelayThreadMessageRepository threadMessageRepository;
 	private final RelayPartnersMapper partnersMapper;
 	private final RelayProductMapper productMapper;
-	private final RelayScoutCatalog scoutCatalog;
+	private final RelayCreatorScoutService creatorScoutService;
 	private final RelayOutreachMailService mailService;
 	private final RelayGmailMailboxRepository gmailMailboxRepository;
 	private final GmailSendService gmailSendService;
@@ -109,7 +109,6 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 	}
 
 	@Override
-	@Transactional(readOnly = true)
 	public ApiResponse<List<RelayScoutResultResponse>> scout(RelayScoutRequest request) {
 		RelayUser user = requireCurrentUser();
 		requireActiveSubscription(user);
@@ -119,7 +118,7 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 				.filter(StringUtils::hasText)
 				.toList();
 		List<String> platforms = request.getPlatforms() != null ? request.getPlatforms() : List.of();
-		List<RelayScoutResultResponse> results = scoutCatalog.scout(request.getQuery(), platforms, skip);
+		List<RelayScoutResultResponse> results = creatorScoutService.scout(request.getQuery(), platforms, skip);
 		return ApiResponse.ok(results.isEmpty() ? "No new creators for that search." : "Creators found", results);
 	}
 
@@ -331,14 +330,14 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 				}
 			}
 			else {
-				mailService.send(email, subject, body);
+				String smtpMessageId = mailService.send(email, subject, body);
 				RelayOutreachMessage message = new RelayOutreachMessage();
 				message.setProspect(prospect);
 				message.setStep(1);
 				message.setSentAt(Instant.now());
 				message.setSubject(subject);
 				message.setBody(body);
-				message.setProviderId("smtp");
+				message.setProviderId(StringUtils.hasText(smtpMessageId) ? trimTo(smtpMessageId, 255) : "smtp");
 				message.setSendStatus("SENT");
 				message.setIdempotencyKey(idem);
 				outreachMessageRepository.save(message);

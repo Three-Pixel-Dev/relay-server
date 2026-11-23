@@ -43,7 +43,8 @@ public class RelayOutreachMailService {
 		return mailUsername != null ? mailUsername.trim() : "";
 	}
 
-	public void send(String to, String subject, String body) {
+	/** Sends one message and returns its Message-ID header (used later to match the creator's reply). */
+	public String send(String to, String subject, String body) {
 		if (!isConfigured()) {
 			throw new BusinessRuleException(
 					"Mailbox SMTP is not configured. Set SPRING_MAIL_USERNAME and SPRING_MAIL_PASSWORD.");
@@ -66,6 +67,7 @@ public class RelayOutreachMailService {
 			message.setHeader("List-Unsubscribe", "<mailto:" + from + "?subject=unsubscribe>");
 			mailSender.send(message);
 			log.info("Outreach email sent to recipient domain={}", domainOf(to));
+			return message.getMessageID();
 		}
 		catch (MailException | jakarta.mail.MessagingException ex) {
 			log.warn("Outreach email failed for domain={}: {}", domainOf(to), ex.getClass().getSimpleName());

@@ -59,6 +59,19 @@ public interface RelayOutreachMessageRepository extends BaseRepository<RelayOutr
 	List<RelayOutreachMessage> findPendingFollowUpsForProspect(@Param("prospectId") Long prospectId);
 
 	@Query("""
+			select m from RelayOutreachMessage m
+			join fetch m.prospect p
+			join fetch p.user
+			where m.sendStatus = 'SENT'
+			  and m.mailbox is null
+			  and m.sentAt is not null
+			  and (m.providerId = 'smtp' or m.providerId like '<%')
+			  and p.status = com.expnai.relay.domain.enums.RelayProspectStatus.SENT
+			order by m.sentAt asc
+			""")
+	List<RelayOutreachMessage> findSmtpAwaitingReply();
+
+	@Query("""
 			select count(m) from RelayOutreachMessage m
 			where m.prospect.user.id = :userId
 			  and m.sentAt is not null

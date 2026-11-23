@@ -1,0 +1,191 @@
+package com.expnai.relay.features.partners.scout;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+
+import com.expnai.relay.common.exception.BadGatewayException;
+import com.expnai.relay.common.exception.BusinessRuleException;
+import com.expnai.relay.features.partners.dto.response.RelayScoutResultResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+class RelayCreatorScoutServiceTest {
+
+	private final List<String> fetched = new ArrayList<>();
+
+	private RelayCreatorScoutService service(CreatorPageFetcher fetcher) {
+		return new RelayCreatorScoutService(
+				fetcher,
+				new YoutubeCreatorParser(new ObjectMapper()),
+				new YahooSearchParser(),
+				new DuckDuckGoSearchParser(),
+				new InstagramProfileParser(),
+				new InstagramProfilePageParser(),
+				new CreatorSignalExtractor());
+	}
+
+	private CreatorPageFetcher working() {
+		return url -> {
+			fetched.add(url);
+			if (url.contains("search.yahoo.com")) {
+				return YahooSearchParserTest.RESULTS_PAGE;
+			}
+			if (url.contains("duckduckgo.com")) {
+				return DuckDuckGoSearchParserTest.RESULTS_PAGE;
+			}
+			if (url.contains("instagram.com/leesdogtraining")) {
+				return InstagramProfilePageParserTest.PROFILE_PAGE;
+			}
+			if (url.contains("youtube.com/results")) {
+				return YoutubeCreatorParserTest.SEARCH_PAGE;
+			}
+			if (url.contains("/@hamiltondogtraining/about")) {
+				return YoutubeCreatorParserTest.ABOUT_PAGE;
+			}
+			return "<html></html>";
+		};
+	}
+
+	@Test
+	void returnsCreatorsFromBothPlatformsThatHaveAPublicEmail() {
+		List<RelayScoutResultResponse> results = service(working())
+				.scout("dog training", List.of("youtube", "instagram"), List.of());
+
+		assertEquals(2, results.size());
+		RelayScoutResultResponse youtube = results.stream().filter(r -> r.plat().equals("youtube")).findFirst().orElseThrow();
+		assertEquals("Hamilton Dog Training", youtube.name());
+		assertEquals("@hamiltondogtraining", youtube.handle());
+		assertEquals("hi@hamilton.co", youtube.email());
+		assertEquals("125k", youtube.followers());
+		assertTrue(youtube.signal().startsWith("About: “"));
+
+		RelayScoutResultResponse instagram = results.stream().filter(r -> r.plat().equals("instagram")).findFirst().orElseThrow();
+		assertEquals("@leesdogtraining", instagram.handle());
+		assertEquals("leesdogtraining@aol.com", instagram.email());
+		assertEquals("56", instagram.followers());
+		assertEquals("instagram.com/leesdogtraining", instagram.url());
+	}
+
+	@Test
+	void enrichesInstagramFromTheProfilePageWhenTheSerpSnippetHasNoEmail() {
+		CreatorPageFetcher thinSnippet = url -> {
+			fetched.add(url);
+			if (url.contains("search.yahoo.com")) {
+				return """
+						<html><body><div id="web"><ol>
+						<li><div class="dd algo algo-sr"><div class="compTitle"><a href="https://www.instagram.com/leesdogtraining/">
+						<h3 class="title"><span>Lee’s dog training (@leesdogtraining)</span></h3></a></div>
+						<div class="compText"><p>56 Followers, 30 Following, 7 Posts</p></div></div></li>
+						</ol></div></body></html>
+						""";
+			}
+			if (url.contains("instagram.com/leesdogtraining")) {
+				return InstagramProfilePageParserTest.PROFILE_PAGE;
+			}
+			return "<html></html>";
+		};
+
+		List<RelayScoutResultResponse> results = service(thinSnippet)
+				.scout("dog training", List.of("instagram"), List.of());
+
+		assertEquals(1, results.size());
+		assertEquals("instagram.com/leesdogtraining", results.get(0).url());
+		assertEquals("leesdogtraining@aol.com", results.get(0).email());
+		assertTrue(fetched.stream().anyMatch(u -> u.contains("instagram.com/leesdogtraining")));
+	}
+
+	@Test
+	void fallsBackToDuckDuckGoWhenYahooReturnsNothingUseful() {
+		CreatorPageFetcher yahooDown = url -> {
+			fetched.add(url);
+			if (url.contains("search.yahoo.com")) {
+				return "<html><body>Unusual traffic</body></html>";
+			}
+			if (url.contains("duckduckgo.com")) {
+				return DuckDuckGoSearchParserTest.RESULTS_PAGE;
+			}
+			if (url.contains("instagram.com/leesdogtraining")) {
+				return InstagramProfilePageParserTest.PROFILE_PAGE;
+			}
+			return "<html></html>";
+		};
+
+		List<RelayScoutResultResponse> results = service(yahooDown)
+				.scout("dog training", List.of("instagram"), List.of());
+
+		assertEquals(1, results.size());
+		assertEquals("instagram.com/leesdogtraining", results.get(0).url());
+		assertEquals("leesdogtraining@aol.com", results.get(0).email());
+		assertTrue(fetched.stream().anyMatch(u -> u.contains("duckduckgo.com")));
+		assertTrue(fetched.stream().anyMatch(u -> u.contains("instagram.com/leesdogtraining")));
+	}
+
+	@Test
+	void dropsCreatorsWithoutAPublicEmail() {
+		CreatorPageFetcher noEmails = url -> {
+			if (url.contains("youtube.com/results")) {
+				return YoutubeCreatorParserTest.SEARCH_PAGE;
+			}
+			return "<html><script>var ytInitialData = {\"metadata\":{\"channelMetadataRenderer\":{\"description\":\"no contact\"}}};</script></html>";
+		};
+
+		assertTrue(service(noEmails).scout("dog training", List.of("youtube"), List.of()).isEmpty());
+	}
+
+	@Test
+	void skipsCreatorsAlreadyOnTheUsersList() {
+		List<RelayScoutResultResponse> results = service(working())
+				.scout("dog training", List.of("instagram"), List.of("@LeesDogTraining"));
+
+		assertTrue(results.isEmpty());
+	}
+
+	@Test
+	void keepsWorkingWhenOnePlatformFails() {
+		CreatorPageFetcher youtubeDown = url -> {
+			if (url.contains("youtube.com")) {
+				throw new IllegalStateException("blocked");
+			}
+			if (url.contains("search.yahoo.com")) {
+				return YahooSearchParserTest.RESULTS_PAGE;
+			}
+			return "<html></html>";
+		};
+
+		List<RelayScoutResultResponse> results = service(youtubeDown)
+				.scout("dog training", List.of("youtube", "instagram"), List.of());
+
+		assertEquals(1, results.size());
+		assertEquals("instagram", results.get(0).plat());
+	}
+
+	@Test
+	void reportsAnErrorWhenEveryPlatformFails() {
+		CreatorPageFetcher down = url -> {
+			throw new IllegalStateException("blocked");
+		};
+
+		assertThrows(BadGatewayException.class, () -> service(down).scout("dog training", List.of(), List.of()));
+	}
+
+	@Test
+	void requiresANiche() {
+		assertThrows(BusinessRuleException.class, () -> service(working()).scout("  ", List.of(), List.of()));
+	}
+
+	@Test
+	void reusesRecentResultsForTheSameSearch() {
+		RelayCreatorScoutService service = service(working());
+		service.scout("dog training", List.of("instagram"), List.of());
+		int firstRun = fetched.size();
+
+		service.scout("Dog Training", List.of("instagram"), List.of());
+
+		assertEquals(firstRun, fetched.size());
+	}
+}

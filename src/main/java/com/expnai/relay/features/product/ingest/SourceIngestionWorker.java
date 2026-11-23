@@ -116,7 +116,8 @@ public class SourceIngestionWorker {
 					.count();
 			int docsRead = (int) sources.stream()
 					.filter(s -> s.getStatus() == RelaySourceStatus.READY
-							&& (s.getKind() == RelaySourceKind.FILE || s.getKind() == RelaySourceKind.WEB))
+							&& (s.getKind() == RelaySourceKind.FILE || s.getKind() == RelaySourceKind.WEB
+									|| s.getKind() == RelaySourceKind.INSTAGRAM))
 					.count();
 			List<String> progressLines = new ArrayList<>();
 			summarizeAndSaveProfile(
@@ -174,15 +175,8 @@ public class SourceIngestionWorker {
 		if (webCount > 0) {
 			addProgress(productId, progressLines, "Reading the linked page");
 		}
-
-		// Handle Instagram sources first (marked SKIPPED with clear terminal status + thread note)
-		for (RelaySource source : sources) {
-			if (source.getKind() == RelaySourceKind.INSTAGRAM) {
-				String skipReason = "Instagram reading requires creator OAuth approval (out of scope for Phase 1).";
-				markSourceSkipped(source.getId(), productId, skipReason);
-				appendThreadMessage(productId, RelayThreadWho.RELAY,
-						"Skipped Instagram source (**" + source.getName() + "**) — " + skipReason);
-			}
+		if (igCount > 0) {
+			addProgress(productId, progressLines, "Instagram: reading public profile bio and post captions");
 		}
 
 		int totalVideosRead = 0;
@@ -193,10 +187,6 @@ public class SourceIngestionWorker {
 			if (isProductCancelled(productId)) {
 				return;
 			}
-			if (source.getKind() == RelaySourceKind.INSTAGRAM) {
-				continue;
-			}
-
 			markSourceReading(source.getId(), productId);
 			try {
 				ParseResult parsed = sourceParserService.parseSource(
@@ -246,7 +236,9 @@ public class SourceIngestionWorker {
 			catch (Exception sourceEx) {
 				log.warn("Source {} ({}) failed during ingestion: {}",
 						source.getId(), source.getName(), sourceEx.getMessage());
-				String friendlyErr = (source.getKind() == RelaySourceKind.WEB || source.getKind() == RelaySourceKind.YOUTUBE)
+				String friendlyErr = (source.getKind() == RelaySourceKind.WEB
+						|| source.getKind() == RelaySourceKind.YOUTUBE
+						|| source.getKind() == RelaySourceKind.INSTAGRAM)
 						? "We couldn't read this link"
 						: (sourceEx.getMessage() != null && !sourceEx.getMessage().isBlank()
 								? sourceEx.getMessage()
@@ -263,29 +255,11 @@ public class SourceIngestionWorker {
 
 		long totalPassages = passageRepository.countByProductId(productId);
 		if (totalPassages == 0) {
-			if (igCount > 0 && ytCount == 0 && fileCount == 0 && webCount == 0) {
-				transactionTemplate.executeWithoutResult(status -> {
-					productRepository.findById(productId).ifPresent(product -> {
-						product.setStepProgress(null);
-						product.setStepStatus("done");
-						product.setBuildStep(1);
-						productRepository.save(product);
-						String pocketsEst = aiPricingService.estimatePocketsUsd()
-								.map(est -> "About ~$" + est + " in AI (estimate), a minute.")
-								.orElse("AI cost estimate unavailable right now.");
-						saveThreadMessage(product, RelayThreadWho.RELAY,
-								"Next: **Profitable pockets**. " + pocketsEst);
-					});
-				});
-				publishTerminalProduct(productId);
-			}
-			else {
-				boolean anyLink = webCount > 0 || ytCount > 0;
-				String failMsg = anyLink
-						? "We couldn't read this link. Replace or remove it and press Proceed again."
-						: "No passages could be indexed from the sources. Replace or remove the failed source and press Proceed again.";
-				failStepGracefully(productId, failMsg);
-			}
+			boolean anyLink = webCount > 0 || ytCount > 0 || igCount > 0;
+			String failMsg = anyLink
+					? "We couldn't read this link. Replace or remove it and press Proceed again."
+					: "No passages could be indexed from the sources. Replace or remove the failed source and press Proceed again.";
+			failStepGracefully(productId, failMsg);
 			return;
 		}
 
@@ -602,17 +576,6 @@ public class SourceIngestionWorker {
 			sourceRepository.findById(sourceId).ifPresent(source -> {
 				source.setStatus(RelaySourceStatus.READY);
 				source.setErrorMessage(null);
-				sourceRepository.save(source);
-			});
-		});
-	}
-
-	private void markSourceSkipped(Long sourceId, Long productId, String reason) {
-		transactionTemplate.executeWithoutResult(status -> {
-			passageRepository.deleteHardBySourceIdAndProductId(sourceId, productId);
-			sourceRepository.findById(sourceId).ifPresent(source -> {
-				source.setStatus(RelaySourceStatus.SKIPPED);
-				source.setErrorMessage(reason != null ? reason : "Skipped");
 				sourceRepository.save(source);
 			});
 		});

@@ -22,7 +22,10 @@ import com.expnai.relay.common.exception.InvalidSessionException;
 import com.expnai.relay.common.exception.ResourceNotFoundException;
 import com.expnai.relay.common.security.CredentialEncryptionService;
 import com.expnai.relay.common.web.ApiResponse;
+import com.expnai.relay.domain.entity.RelayGmailMailbox;
 import com.expnai.relay.domain.entity.RelayServiceConnection;
+import com.expnai.relay.domain.enums.RelayGmailMailboxStatus;
+import com.expnai.relay.domain.repository.RelayGmailMailboxRepository;
 import com.expnai.relay.domain.entity.RelaySubscription;
 import com.expnai.relay.domain.entity.RelayUser;
 import com.expnai.relay.domain.enums.RelayServiceStatus;
@@ -51,6 +54,7 @@ public class RelayWorkspaceController {
 	private final CredentialEncryptionService credentialEncryptionService;
 	private final RelayWhopService whopService;
 	private final AiKeyValidationService aiKeyValidationService;
+	private final RelayGmailMailboxRepository gmailMailboxRepository;
 
 	@GetMapping
 	@Transactional(readOnly = true)
@@ -95,6 +99,9 @@ public class RelayWorkspaceController {
 			@PathVariable("id") String serviceId,
 			@RequestBody(required = false) Map<String, String> body) {
 		RelayUser user = requireCurrentUser();
+		if ("gmail".equalsIgnoreCase(serviceId)) {
+			throw new BusinessRuleException("Connect Gmail with Google sign-in (POST /api/gmail/oauth/start).");
+		}
 		String label = body != null && body.get("label") != null ? body.get("label") : "Connected";
 		String credential = body != null ? body.get("credential") : null;
 
@@ -128,6 +135,10 @@ public class RelayWorkspaceController {
 	@Transactional
 	public ApiResponse<Map<String, Object>> disconnectService(@PathVariable("id") String serviceId) {
 		RelayUser user = requireCurrentUser();
+		if ("gmail".equalsIgnoreCase(serviceId)) {
+			disconnectGmailMailboxes(user);
+			return ApiResponse.ok("Service disconnected", buildWorkspaceMap(user));
+		}
 		serviceConnectionRepository
 				.findFirstByUserIdAndServiceIdIgnoreCaseOrderByCreatedAtDesc(user.getId(), serviceId)
 				.ifPresent(conn -> {
@@ -150,6 +161,20 @@ public class RelayWorkspaceController {
 			case "llm", "gemini", "google", "google-ai", "img", "image", "gemini-image" -> true;
 			default -> false;
 		};
+	}
+
+	private void disconnectGmailMailboxes(RelayUser user) {
+		for (RelayGmailMailbox mailbox : gmailMailboxRepository.findByUserIdOrderByCreatedAtAsc(user.getId())) {
+			if (mailbox.getStatus() == RelayGmailMailboxStatus.DISCONNECTED) {
+				continue;
+			}
+			mailbox.setStatus(RelayGmailMailboxStatus.DISCONNECTED);
+			mailbox.setEncryptedAccessToken(null);
+			mailbox.setEncryptedRefreshToken(null);
+			mailbox.setAccessTokenExpiresAt(null);
+			mailbox.setHistoryId(null);
+			gmailMailboxRepository.save(mailbox);
+		}
 	}
 
 	private RelayUser requireCurrentUser() {
@@ -181,13 +206,20 @@ public class RelayWorkspaceController {
 		Map<String, Object> services = new LinkedHashMap<>();
 		List<RelayServiceConnection> connections = serviceConnectionRepository.findByUserIdOrderByCreatedAtAsc(user.getId());
 		for (RelayServiceConnection conn : connections) {
-			if (conn.getStatus() == RelayServiceStatus.CONNECTED) {
+			if (conn.getStatus() == RelayServiceStatus.CONNECTED && !"gmail".equalsIgnoreCase(conn.getServiceId())) {
 				services.put(conn.getServiceId(), Map.of(
 						"status", "connected",
 						"label", conn.getLabel() != null ? conn.getLabel() : "Connected",
 						"t", "Connected"));
 			}
 		}
+		gmailMailboxRepository.findByUserIdOrderByCreatedAtAsc(user.getId()).stream()
+				.filter(m -> m.getStatus() == RelayGmailMailboxStatus.CONNECTED)
+				.findFirst()
+				.ifPresent(m -> services.put("gmail", Map.of(
+						"status", "connected",
+						"label", m.getEmail(),
+						"t", "Connected")));
 		out.put("services", services);
 		return out;
 	}

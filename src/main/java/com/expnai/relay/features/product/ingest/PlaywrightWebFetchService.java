@@ -39,6 +39,7 @@ import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.Response;
 import com.microsoft.playwright.TimeoutError;
+import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.LoadState;
 import com.microsoft.playwright.options.WaitUntilState;
 
@@ -249,6 +250,52 @@ public class PlaywrightWebFetchService {
 		finally {
 			if (acquired) {
 				semaphore.release();
+			}
+		}
+	}
+
+	/**
+	 * Loads a server-rendered page quickly: no images, media or fonts, no settle wait. Meant for pages
+	 * whose data is already in the initial HTML (search result pages, YouTube's embedded JSON).
+	 */
+	public String fetchLightHtml(String url, Map<String, String> cookies) {
+		return runSerializedTask("page " + url, () -> loadLightHtmlOnWorkerThread(url, cookies));
+	}
+
+	private String loadLightHtmlOnWorkerThread(String url, Map<String, String> cookies) {
+		Browser browser = ensureSharedBrowser();
+		try (BrowserContext context = browser.newContext(new Browser.NewContextOptions()
+				.setUserAgent(GOOGLE_USER_AGENT)
+				.setLocale("en-US")
+				.setViewportSize(1366, 900)
+				.setIgnoreHTTPSErrors(true))) {
+			if (cookies != null && !cookies.isEmpty()) {
+				List<Cookie> jar = new ArrayList<>();
+				for (Map.Entry<String, String> cookie : cookies.entrySet()) {
+					jar.add(new Cookie(cookie.getKey(), cookie.getValue()).setUrl(url));
+				}
+				context.addCookies(jar);
+			}
+			context.route("**/*", route -> {
+				String type = route.request().resourceType();
+				if ("image".equals(type) || "media".equals(type) || "font".equals(type)) {
+					route.abort();
+				}
+				else {
+					route.resume();
+				}
+			});
+			try (Page page = context.newPage()) {
+				page.setDefaultTimeout(timeoutMs);
+				page.setDefaultNavigationTimeout(timeoutMs);
+				page.navigate(url, new Page.NavigateOptions()
+						.setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
+						.setTimeout(timeoutMs));
+				String html = page.content();
+				if (html == null || html.isBlank()) {
+					throw new IllegalStateException("Empty page returned for " + url);
+				}
+				return html;
 			}
 		}
 	}
