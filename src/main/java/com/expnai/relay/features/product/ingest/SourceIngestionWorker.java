@@ -149,8 +149,24 @@ public class SourceIngestionWorker {
 			addProgress(productId, progressLines, "YouTube: reading the last 30 videos and their captions");
 		}
 		if (fileCount > 0) {
-			addProgress(productId, progressLines,
-					"Reading " + fileCount + " document" + (fileCount > 1 ? "s" : "") + " and splitting into passages");
+			long mediaCount = sources.stream()
+					.filter(s -> s.getKind() == RelaySourceKind.FILE)
+					.filter(s -> FfmpegAudioService.isMediaFilename(s.getName()))
+					.count();
+			if (mediaCount > 0 && mediaCount == fileCount) {
+				addProgress(productId, progressLines,
+						"Transcribing " + mediaCount + " audio file" + (mediaCount > 1 ? "s" : "")
+								+ " and splitting into passages");
+			}
+			else if (mediaCount > 0) {
+				addProgress(productId, progressLines,
+						"Reading documents, transcribing audio, and splitting into passages");
+			}
+			else {
+				addProgress(productId, progressLines,
+						"Reading " + fileCount + " document" + (fileCount > 1 ? "s" : "")
+								+ " and splitting into passages");
+			}
 		}
 		if (webCount > 0) {
 			addProgress(productId, progressLines, "Reading the linked page");

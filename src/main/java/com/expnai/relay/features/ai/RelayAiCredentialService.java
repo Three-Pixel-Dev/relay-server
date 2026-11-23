@@ -3,6 +3,8 @@ package com.expnai.relay.features.ai;
 import java.util.List;
 import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -17,6 +19,8 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class RelayAiCredentialService {
+
+	private static final Logger log = LoggerFactory.getLogger(RelayAiCredentialService.class);
 
 	private static final List<String> GEMINI_SERVICE_IDS = List.of("gemini", "google", "google-ai", "llm");
 	private static final List<String> IMAGE_SERVICE_IDS = List.of("img", "image", "gemini-image");
@@ -45,13 +49,8 @@ public class RelayAiCredentialService {
 							RelayServiceStatus.CONNECTED);
 			if (conn.isPresent()) {
 				RelayServiceConnection connection = conn.get();
-				String rawStored = connection.getEncryptedCredential();
-				String key = trimToNull(credentialEncryptionService.decrypt(rawStored));
+				String key = readStoredKey(connection);
 				if (key != null) {
-					if (rawStored != null && !rawStored.startsWith("enc:v1:")) {
-						connection.setEncryptedCredential(credentialEncryptionService.encrypt(key));
-						serviceConnectionRepository.save(connection);
-					}
 					if (key.startsWith("sk-")) {
 						sawOpenAiKey = true;
 						continue;
@@ -91,13 +90,8 @@ public class RelayAiCredentialService {
 							RelayServiceStatus.CONNECTED);
 			if (conn.isPresent()) {
 				RelayServiceConnection connection = conn.get();
-				String rawStored = connection.getEncryptedCredential();
-				String key = trimToNull(credentialEncryptionService.decrypt(rawStored));
+				String key = readStoredKey(connection);
 				if (key != null) {
-					if (rawStored != null && !rawStored.startsWith("enc:v1:")) {
-						connection.setEncryptedCredential(credentialEncryptionService.encrypt(key));
-						serviceConnectionRepository.save(connection);
-					}
 					if (key.startsWith("sk-")) {
 						sawOpenAiKey = true;
 						continue;
@@ -116,6 +110,29 @@ public class RelayAiCredentialService {
 		}
 		throw new BusinessRuleException(
 				"Connect your Google Gemini API key (under Text model in Connections) or set GEMINI_API_KEY before reading sources.");
+	}
+
+	private String readStoredKey(RelayServiceConnection connection) {
+		String rawStored = connection.getEncryptedCredential();
+		String key;
+		try {
+			key = trimToNull(credentialEncryptionService.decrypt(rawStored));
+		}
+		catch (RuntimeException ex) {
+			log.warn(
+					"Stored {} API key could not be decrypted. Re-save it in Connections or rely on GEMINI_API_KEY. {}",
+					connection.getServiceId(),
+					ex.getMessage());
+			return null;
+		}
+		if (key == null) {
+			return null;
+		}
+		if (rawStored != null && !rawStored.startsWith("enc:v1:")) {
+			connection.setEncryptedCredential(credentialEncryptionService.encrypt(key));
+			serviceConnectionRepository.save(connection);
+		}
+		return key;
 	}
 
 	private String trimToNull(String value) {
