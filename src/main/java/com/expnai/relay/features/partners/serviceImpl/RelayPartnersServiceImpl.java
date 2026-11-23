@@ -330,14 +330,14 @@ public class RelayPartnersServiceImpl implements RelayPartnersService {
 				}
 			}
 			else {
-				mailService.send(email, subject, body);
+				String smtpMessageId = mailService.send(email, subject, body);
 				RelayOutreachMessage message = new RelayOutreachMessage();
 				message.setProspect(prospect);
 				message.setStep(1);
 				message.setSentAt(Instant.now());
 				message.setSubject(subject);
 				message.setBody(body);
-				message.setProviderId("smtp");
+				message.setProviderId(StringUtils.hasText(smtpMessageId) ? trimTo(smtpMessageId, 255) : "smtp");
 				message.setSendStatus("SENT");
 				message.setIdempotencyKey(idem);
 				outreachMessageRepository.save(message);

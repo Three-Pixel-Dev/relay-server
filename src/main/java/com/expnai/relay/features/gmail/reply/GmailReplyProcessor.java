@@ -58,10 +58,22 @@ public class GmailReplyProcessor {
 				mailbox.getEmail(),
 				true);
 
+		return applyClassification(prospect, message, classification);
+	}
+
+	/** Applies a classified inbound message to the prospect; shared by Gmail API and SMTP/IMAP reply sync. */
+	@Transactional
+	public String applyClassification(
+			RelayProspect prospect,
+			GmailMessageView message,
+			ReplyClassification classification) {
+		String prospectEmail = prospect.getEmail() != null
+				? prospect.getEmail().trim().toLowerCase(Locale.ROOT)
+				: "";
 		return switch (classification) {
 			case UNRELATED, AUTO_REPLY -> classification.name();
 			case BOUNCE, UNSUBSCRIBE -> {
-				suppress(mailbox, prospectEmail, classification.name());
+				suppress(prospect, prospectEmail, classification.name());
 				followUpService.cancelPendingForProspect(prospect.getId(), classification.name());
 				prospect.setStatus(RelayProspectStatus.DECLINED);
 				prospectRepository.save(prospect);
@@ -80,8 +92,7 @@ public class GmailReplyProcessor {
 					prospect.setStatus(RelayProspectStatus.REPLIED);
 				}
 				prospectRepository.save(prospect);
-				log.info("Processed human reply mailboxId={} prospectId={} classification={}",
-						mailbox.getId(), prospect.getId(), classification);
+				log.info("Processed human reply prospectId={} classification={}", prospect.getId(), classification);
 				yield classification.name();
 			}
 		};
@@ -103,15 +114,15 @@ public class GmailReplyProcessor {
 		replyRepository.save(reply);
 	}
 
-	private void suppress(RelayGmailMailbox mailbox, String email, String reason) {
+	private void suppress(RelayProspect prospect, String email, String reason) {
 		if (email == null || email.isBlank()) {
 			return;
 		}
-		if (suppressionRepository.existsByUserIdAndEmailIgnoreCase(mailbox.getUser().getId(), email)) {
+		if (suppressionRepository.existsByUserIdAndEmailIgnoreCase(prospect.getUser().getId(), email)) {
 			return;
 		}
 		RelaySuppression suppression = new RelaySuppression();
-		suppression.setUser(mailbox.getUser());
+		suppression.setUser(prospect.getUser());
 		suppression.setEmail(email);
 		suppression.setReason(reason + " at " + Instant.now());
 		suppressionRepository.save(suppression);
