@@ -26,6 +26,7 @@ public class GeminiAudioTranscribeClient {
 	private static final String TRANSCRIBE_PROMPT = """
 			Transcribe this audio into plain text in the original spoken language.
 			Keep natural paragraphs. If speakers change, start a new paragraph.
+			Prefix each paragraph with an estimated timestamp like [m:ss] from the start of this clip.
 			Do not add a title, summary, translation, or commentary.
 			Output ONLY the transcript. If there is no speech, return an empty string.
 			""";

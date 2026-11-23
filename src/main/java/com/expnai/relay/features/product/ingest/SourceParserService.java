@@ -45,6 +45,9 @@ import com.expnai.relay.domain.enums.RelaySourceKind;
 import com.expnai.relay.features.ai.GeminiAudioTranscribeClient;
 import com.expnai.relay.features.ai.GeminiPdfOcrClient;
 import com.expnai.relay.features.ai.GeminiUrlContextFetchService;
+import com.expnai.relay.features.ai.GeminiVideoNotesClient;
+import com.expnai.relay.features.ai.GeminiVideoNotesClient.SceneImage;
+import com.expnai.relay.features.product.ingest.FfmpegAudioService.SampledFrame;
 import com.expnai.relay.features.product.storage.FileStorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -79,7 +82,9 @@ public class SourceParserService {
 	private final GeminiUrlContextFetchService geminiUrlContextFetchService;
 	private final GeminiPdfOcrClient geminiPdfOcrClient;
 	private final GeminiAudioTranscribeClient geminiAudioTranscribeClient;
+	private final GeminiVideoNotesClient geminiVideoNotesClient;
 	private final FfmpegAudioService ffmpegAudioService;
+	private final VideoSceneSelector videoSceneSelector;
 	private final ObjectMapper objectMapper;
 
 	@Value("${youtube.api.key:}")
@@ -204,10 +209,19 @@ public class SourceParserService {
 				throw new IllegalArgumentException(
 						"No speech could be transcribed from " + sourceName + ". Try a clearer recording.");
 			}
+
+			if (FfmpegAudioService.isVideoFilename(sourceName)) {
+				combined = mergeVideoScenes(
+						path, sourceName, chatApiKey, progressCallback, productId, workDir, combined);
+			}
+
 			List<String> windows = splitTextIntoWindows(combined);
 			List<PassageChunk> chunks = new ArrayList<>(windows.size());
 			for (int i = 0; i < windows.size(); i++) {
-				chunks.add(new PassageChunk(windows.get(i), sourceName + ", audio " + (i + 1)));
+				String locator = FfmpegAudioService.isVideoFilename(sourceName)
+						? sourceName + ", video " + (i + 1)
+						: sourceName + ", audio " + (i + 1);
+				chunks.add(new PassageChunk(windows.get(i), locator));
 			}
 			return new ParseResult(chunks, 0, 1);
 		}
@@ -219,6 +233,44 @@ public class SourceParserService {
 		}
 		finally {
 			ffmpegAudioService.deleteQuietly(workDir);
+		}
+	}
+
+	private String mergeVideoScenes(
+			Path path,
+			String sourceName,
+			String chatApiKey,
+			Consumer<String> progressCallback,
+			Long productId,
+			Path workDir,
+			String transcript) {
+		if (chatApiKey == null || chatApiKey.isBlank() || chatApiKey.trim().startsWith("sk-")) {
+			return transcript;
+		}
+		if (progressCallback != null) {
+			progressCallback.accept("Selecting unique scenes from " + sourceName);
+		}
+		try {
+			Path frameDir = workDir.resolve("frames");
+			List<SampledFrame> sampled = ffmpegAudioService.extractSampledFrames(
+					path, frameDir, videoSceneSelector.frameIntervalSeconds());
+			List<SampledFrame> scenes = videoSceneSelector.select(sampled);
+			if (scenes.size() < 2) {
+				return transcript;
+			}
+			List<SceneImage> images = new ArrayList<>();
+			for (SampledFrame scene : scenes) {
+				images.add(GeminiVideoNotesClient.fromFrame(scene, Files.readAllBytes(scene.path())));
+			}
+			if (progressCallback != null) {
+				progressCallback.accept("Reading " + images.size() + " on-screen scenes from " + sourceName);
+			}
+			return geminiVideoNotesClient.combineTranscriptAndScenes(
+					chatApiKey, transcript, images, productId, sourceName);
+		}
+		catch (Exception ex) {
+			log.warn("Video scene notes skipped for {}: {}", sourceName, ex.getMessage());
+			return transcript;
 		}
 	}
 
