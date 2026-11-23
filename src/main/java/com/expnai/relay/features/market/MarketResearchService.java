@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.features.market.MarketResearchPack.EtsyKeywordResult;
 import com.expnai.relay.features.market.MarketResearchPack.GoogleSearchResult;
 import com.expnai.relay.features.market.MarketResearchPack.GoogleTrendsResult;
@@ -65,6 +66,9 @@ public class MarketResearchService {
 			throw new BusinessRuleException("No keywords available for market research.");
 		}
 
+		RelayTrace.scrape("market research start keywords={} marketplaceProvider={} googleProvider={}",
+				cleanKeywords, normalizeMarketplaceMode(marketplaceProvider), normalizeGoogleMode(googleProvider));
+
 		String queriedAt = LocalDate.now(ZoneOffset.UTC).toString();
 		List<EtsyKeywordResult> etsyResults = new CopyOnWriteArrayList<>();
 		List<GoogleSearchResult> googleResults = new CopyOnWriteArrayList<>();
@@ -93,6 +97,9 @@ public class MarketResearchService {
 				List.copyOf(googleResults),
 				List.copyOf(trendsResults),
 				List.copyOf(missingProviders));
+
+		RelayTrace.scrape("market research done etsy={} google={} trends={} missing={}",
+				etsyResults.size(), googleResults.size(), trendsResults.size(), missingProviders.size());
 
 		if (pack.isEmpty()) {
 			throw new BusinessRuleException(

@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.features.market.MarketResearchPack.EtsyKeywordResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -40,9 +41,12 @@ public class MarketplaceKeywordCache {
 		try {
 			String raw = redisTemplate.opsForValue().get(key);
 			if (raw == null || raw.isBlank()) {
+				RelayTrace.scrape("cache MISS key={}", key);
 				return Optional.empty();
 			}
 			EtsyKeywordResult result = objectMapper.readValue(raw, EtsyKeywordResult.class);
+			RelayTrace.scrape("cache HIT key={} listings={} medianPrice={}",
+					key, result != null ? result.activeListingsCount() : 0, result != null ? result.medianPrice() : null);
 			return Optional.ofNullable(result);
 		}
 		catch (Exception ex) {

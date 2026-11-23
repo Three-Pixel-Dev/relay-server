@@ -6,9 +6,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,21 +38,79 @@ public class BrandingLlmService {
 	private static final String GEMINI_MODEL = "gemini-3.8-flash";
 	private static final String OPENAI_MODEL = "gpt-4o-mini";
 
-	private static final String[] PALETTE_TYPE_PAIRS = {
-			"Merriweather / Open Sans",
-			"Fraunces / Inter",
-			"Sora / Sora"
-	};
+	private static final Pattern HEX6_PATTERN = Pattern.compile("^#[0-9a-fA-F]{6}$");
+	private static final Pattern HEX3_PATTERN = Pattern.compile("^#[0-9a-fA-F]{3}$");
+
+	public static final List<BrandPalette> HOUSE_PALETTES = List.of(
+			new BrandPalette(
+					"Editorial",
+					List.of("#f4f1ea", "#25262b", "#8a3b2e", "#dccdbf", "#5f6168"),
+					"Merriweather",
+					"Open Sans"),
+			new BrandPalette(
+					"Calm",
+					List.of("#f7f6f2", "#1f2a44", "#3b7a6e", "#cfe0d8", "#6b7280"),
+					"Fraunces",
+					"Inter"),
+			new BrandPalette(
+					"Bold",
+					List.of("#fffdf5", "#14121c", "#ffcf5a", "#ffe9b0", "#4b4563"),
+					"Sora",
+					"Sora"));
+
+	private static final List<String> STOCK_COVER_DIRECTIONS = List.of(
+			"Classic high-craft editorial cover: light background, bold asymmetric typography at the top, rich accent band and minimalist subject illustration below.",
+			"Dark dramatic editorial cover: deep primary ink background, luminous accent focal artwork in the lower half, crisp light typography at the top.",
+			"Refined centered modern book cover: clean light background, centered display typography paired with a minimalist geometric or organic motif inside a framed card.");
+
+	private static final List<String> ALLOWED_FONTS = List.of(
+			"Merriweather",
+			"Fraunces",
+			"Sora",
+			"Playfair Display",
+			"Libre Baskerville",
+			"Source Serif 4",
+			"Open Sans",
+			"Inter",
+			"DM Sans",
+			"Space Grotesk",
+			"IBM Plex Sans");
 
 	private final ObjectMapper objectMapper;
 	private final AiUsageMeter aiUsageMeter;
 
-	public record GeneratedBrand(String title, int palette, int cover, String typePair, String rationale) {
+	public record BrandPalette(
+			String name,
+			List<String> cols,
+			String display,
+			String body
+	) {
+		public String typePair() {
+			return display + " / " + body;
+		}
+	}
+
+	public record GeneratedBrand(
+			String title,
+			BrandPalette palette,
+			List<String> coverDirections,
+			int preferredCover,
+			String rationale
+	) {
+		public String typePair() {
+			return palette != null ? palette.typePair() : "Merriweather / Open Sans";
+		}
+	}
+
+	public static BrandPalette housePalette(Integer paletteIndex) {
+		int idx = paletteIndex != null
+				? Math.max(0, Math.min(HOUSE_PALETTES.size() - 1, paletteIndex))
+				: 0;
+		return HOUSE_PALETTES.get(idx);
 	}
 
 	public static String typePairForPalette(int paletteIndex) {
-		int idx = Math.max(0, Math.min(PALETTE_TYPE_PAIRS.length - 1, paletteIndex));
-		return PALETTE_TYPE_PAIRS[idx];
+		return housePalette(paletteIndex).typePair();
 	}
 
 	public GeneratedBrand generateBrand(
@@ -76,25 +137,36 @@ public class BrandingLlmService {
 			List<RelaySection> sections) {
 		StringBuilder sb = new StringBuilder();
 		sb.append("""
-				You are Relay, a digital product brand & cover designer.
-				Choose a crisp, marketable cover title, color palette, and cover layout variant for this digital product.
-
-				Available palettes (pick index 0, 1, or 2):
-				- 0: Editorial (warm paper cream, charcoal ink, terracotta accent — Merriweather / Open Sans; best for guides, coaching, craft, lifestyle)
-				- 1: Calm (soft off-white, deep navy, sage teal — Fraunces / Inter; best for wellness, parenting, pets, mindfulness, planners)
-				- 2: Bold (bright ivory, deep ink, golden sun yellow — Sora / Sora; best for business, creators, productivity, templates, systems)
-
-				Available cover layout variants (pick index 0, 1, or 2):
-				- 0: Editorial band (light background, bold bottom accent band)
-				- 1: Dark focal circle (dark ink background, glowing accent circle)
-				- 2: Centered wave card (light background, centered title with calm wave motif)
+				You are Relay, a digital product brand & cover art director.
+				Invent a cohesive, subject-specific brand system for this digital product:
+				- A crisp, marketable cover title (3–7 words).
+				- A custom 5-color palette tailored to the niche and buyer mood (NOT generic defaults):
+				  cols[0]: light page/paper background hex (#rrggbb)
+				  cols[1]: dark primary ink/text hex (#rrggbb, strong contrast against cols[0])
+				  cols[2]: signature brand accent hex (#rrggbb)
+				  cols[3]: soft tint / secondary surface hex (#rrggbb)
+				  cols[4]: muted secondary ink hex (#rrggbb)
+				- A font pair chosen ONLY from this allowlist:
+				  Merriweather, Fraunces, Sora, Playfair Display, Libre Baskerville, Source Serif 4, Open Sans, Inter, DM Sans, Space Grotesk, IBM Plex Sans
+				- Three distinct, specific cover art directions (composition, mood, visual motif — each genuinely different from the others so the user has three strong cover options to pick from).
+				- preferredCover: index 0, 1, or 2 of the direction you recommend most.
 
 				Return ONLY valid JSON matching this exact schema:
 				{
 				  "title": "Crisp cover title (3-7 words, punchy and readable on a book cover)",
-				  "palette": 0,
-				  "cover": 0,
-				  "rationale": "One short sentence explaining why this title and palette fit the buyer."
+				  "palette": {
+				    "name": "Evocative 1-3 word palette name (e.g. Botanical Ink, Warm Studio, Cobalt Ledger)",
+				    "cols": ["#f6f3ec", "#1d2420", "#b84a39", "#e3d6c6", "#5a635e"],
+				    "display": "Playfair Display",
+				    "body": "Inter"
+				  },
+				  "covers": [
+				    "Direction 0: 1-2 sentences describing layout, background tone, and subject-specific motif.",
+				    "Direction 1: 1-2 sentences describing a distinct mood/composition (e.g. dark ink ground or bold typographic poster).",
+				    "Direction 2: 1-2 sentences describing a third distinct layout/motif."
+				  ],
+				  "preferredCover": 0,
+				  "rationale": "One short sentence explaining why this title, palette, and typography fit the buyer."
 				}
 				""");
 
@@ -103,7 +175,7 @@ public class BrandingLlmService {
 				sb.append("\nWorking product name: ").append(product.getName().trim()).append("\n");
 			}
 			if (product.getProductType() != null) {
-				sb.append("Product type: ").append(product.getProductType().getCode().toLowerCase()).append("\n");
+				sb.append("Product type: ").append(product.getProductType().getCode().toLowerCase(Locale.ROOT)).append("\n");
 			}
 			if (product.getStepNote() != null && !product.getStepNote().isBlank()) {
 				sb.append("User's branding suggestion (MUST incorporate this): ")
@@ -143,25 +215,120 @@ public class BrandingLlmService {
 	}
 
 	private GeneratedBrand parseResponse(String rawJson, RelayProduct product, RelayPocket pocket) {
+		String fallbackTitle = (product != null && product.getName() != null && !product.getName().isBlank())
+				? product.getName().trim()
+				: (pocket != null && pocket.getNiche() != null && !pocket.getNiche().isBlank())
+						? pocket.getNiche().trim()
+						: "Practical Field Guide";
 		try {
 			JsonNode node = objectMapper.readTree(rawJson);
-			String fallbackTitle = (product != null && product.getName() != null && !product.getName().isBlank())
-					? product.getName().trim()
-					: (pocket != null && pocket.getNiche() != null && !pocket.getNiche().isBlank())
-							? pocket.getNiche().trim()
-							: "Practical Field Guide";
 			String title = node.path("title").asText("").trim();
 			if (title.isEmpty()) {
 				title = fallbackTitle;
 			}
-			int palette = Math.max(0, Math.min(2, node.path("palette").asInt(0)));
-			int cover = Math.max(0, Math.min(2, node.path("cover").asInt(0)));
+
+			BrandPalette palette = parsePalette(node.path("palette"));
+			List<String> coverDirections = parseCoverDirections(node.path("covers"));
+			int preferredCover = node.has("preferredCover")
+					? node.path("preferredCover").asInt(0)
+					: node.path("cover").asInt(0);
+			preferredCover = Math.max(0, Math.min(2, preferredCover));
+
 			String rationale = node.path("rationale").asText("").trim();
-			return new GeneratedBrand(title, palette, cover, typePairForPalette(palette), rationale);
+			return new GeneratedBrand(title, palette, coverDirections, preferredCover, rationale);
 		}
 		catch (Exception ex) {
-			throw new BusinessRuleException("Failed to parse branding JSON: " + ex.getMessage());
+			log.warn("Failed to parse custom branding JSON (falling back to Editorial): {}", ex.getMessage());
+			return new GeneratedBrand(
+					fallbackTitle,
+					HOUSE_PALETTES.get(0),
+					STOCK_COVER_DIRECTIONS,
+					0,
+					"Editorial palette and balanced cover directions selected for readability.");
 		}
+	}
+
+	private BrandPalette parsePalette(JsonNode paletteNode) {
+		BrandPalette fallback = HOUSE_PALETTES.get(0);
+		if (paletteNode == null || !paletteNode.isObject()) {
+			return fallback;
+		}
+
+		String name = paletteNode.path("name").asText("").trim();
+		if (name.isEmpty()) {
+			name = "Custom Studio";
+		}
+		if (name.length() > 48) {
+			name = name.substring(0, 48).trim();
+		}
+
+		List<String> cols = new ArrayList<>(5);
+		JsonNode colsNode = paletteNode.path("cols");
+		for (int i = 0; i < 5; i++) {
+			String raw = (colsNode.isArray() && i < colsNode.size()) ? colsNode.get(i).asText("") : "";
+			String normalized = normalizeHex(raw);
+			cols.add(normalized != null ? normalized : fallback.cols().get(i));
+		}
+
+		String display = clampFont(paletteNode.path("display").asText(""), "Merriweather");
+		String body = clampFont(paletteNode.path("body").asText(""), "Open Sans");
+
+		return new BrandPalette(name, List.copyOf(cols), display, body);
+	}
+
+	private List<String> parseCoverDirections(JsonNode coversNode) {
+		List<String> directions = new ArrayList<>(3);
+		if (coversNode != null && coversNode.isArray()) {
+			for (JsonNode item : coversNode) {
+				String dir = item.asText("").replaceAll("\\s+", " ").trim();
+				if (!dir.isEmpty() && directions.size() < 3) {
+					directions.add(dir.length() > 360 ? dir.substring(0, 360).trim() : dir);
+				}
+			}
+		}
+		while (directions.size() < 3) {
+			directions.add(STOCK_COVER_DIRECTIONS.get(directions.size()));
+		}
+		return List.copyOf(directions);
+	}
+
+	public static String normalizeHex(String raw) {
+		if (raw == null) {
+			return null;
+		}
+		String trimmed = raw.trim();
+		if (!trimmed.startsWith("#") && (trimmed.length() == 6 || trimmed.length() == 3)) {
+			trimmed = "#" + trimmed;
+		}
+		if (HEX6_PATTERN.matcher(trimmed).matches()) {
+			return trimmed.toLowerCase(Locale.ROOT);
+		}
+		if (HEX3_PATTERN.matcher(trimmed).matches()) {
+			char r = Character.toLowerCase(trimmed.charAt(1));
+			char g = Character.toLowerCase(trimmed.charAt(2));
+			char b = Character.toLowerCase(trimmed.charAt(3));
+			return "#" + r + r + g + g + b + b;
+		}
+		return null;
+	}
+
+	public static String clampFont(String rawFont, String defaultFont) {
+		if (rawFont == null || rawFont.isBlank()) {
+			return defaultFont;
+		}
+		String cleaned = rawFont.trim();
+		for (String allowed : ALLOWED_FONTS) {
+			if (allowed.equalsIgnoreCase(cleaned)) {
+				return allowed;
+			}
+		}
+		String lower = cleaned.toLowerCase(Locale.ROOT);
+		for (String allowed : ALLOWED_FONTS) {
+			if (lower.contains(allowed.toLowerCase(Locale.ROOT))) {
+				return allowed;
+			}
+		}
+		return defaultFont;
 	}
 
 	private String callGemini(String apiKey, String prompt, Long productId) {
@@ -245,4 +412,3 @@ public class BrandingLlmService {
 		return trimmed.trim();
 	}
 }
-

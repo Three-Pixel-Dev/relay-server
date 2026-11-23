@@ -40,6 +40,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.domain.entity.RelaySource;
 import com.expnai.relay.domain.enums.RelaySourceKind;
 import com.expnai.relay.features.ai.GeminiAudioTranscribeClient;
@@ -109,16 +110,27 @@ public class SourceParserService {
 			Consumer<String> progressCallback,
 			Long productId) {
 		RelaySourceKind kind = source.getKind();
+		String label = source.getName() != null ? source.getName() : source.getUrl();
+		RelayTrace.extract("parse start product={} sourceId={} kind={} name={}",
+				productId, source.getId(), kind, RelayTrace.truncate(label, 120));
+		ParseResult result;
 		if (kind == RelaySourceKind.FILE) {
-			return parseFileSource(source, chatApiKey, progressCallback, productId);
+			result = parseFileSource(source, chatApiKey, progressCallback, productId);
 		}
-		if (kind == RelaySourceKind.WEB) {
-			return parseWebSource(source, chatApiKey, progressCallback, productId);
+		else if (kind == RelaySourceKind.WEB) {
+			result = parseWebSource(source, chatApiKey, progressCallback, productId);
 		}
-		if (kind == RelaySourceKind.YOUTUBE) {
-			return parseYoutubeSource(source);
+		else if (kind == RelaySourceKind.YOUTUBE) {
+			result = parseYoutubeSource(source);
 		}
-		return new ParseResult(List.of(), 0, 0);
+		else {
+			result = new ParseResult(List.of(), 0, 0);
+		}
+		RelayTrace.extract("parse done product={} sourceId={} kind={} chunks={} videos={} docs={}",
+				productId, source.getId(), kind,
+				result.chunks() != null ? result.chunks().size() : 0,
+				result.videosRead(), result.docsRead());
+		return result;
 	}
 
 	private ParseResult parseFileSource(

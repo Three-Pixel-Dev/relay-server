@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayPocket;
 import com.expnai.relay.domain.entity.RelayProduct;
@@ -57,8 +58,10 @@ public class PocketGenerationWorker {
 	@Async("relayIngestionTaskExecutor")
 	public void generatePocketsAsync(Long productId, Long userId, String chatApiKey) {
 		AuditUserContext.setCurrentUserId(userId);
+		RelayTrace.step("start product={} step=1(Pockets)", productId);
 		try {
 			runPipeline(productId, chatApiKey);
+			RelayTrace.step("done product={} step=1(Pockets)", productId);
 		}
 		catch (Exception ex) {
 			log.error("Pocket generation failed for product {}: {}", productId, ex.getMessage(), ex);

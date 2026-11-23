@@ -1,21 +1,33 @@
 package com.expnai.relay.domain.enums;
 
 public enum RelayProductType {
-	EBOOK("EBOOK"),
-	WORKBOOK("WORKBOOK"),
-	PLANNER("PLANNER"),
-	CHECKLIST("CHECKLIST"),
-	TEMPLATES("TEMPLATES"),
-	MINICOURSE("MINICOURSE");
+	EBOOK("EBOOK", 11),
+	WORKBOOK("WORKBOOK", 9),
+	PLANNER("PLANNER", 8),
+	CHECKLIST("CHECKLIST", 4),
+	TEMPLATES("TEMPLATES", 8),
+	MINICOURSE("MINICOURSE", 7);
+
+	public static final int DEFAULT_TARGET_SECTIONS = 9;
 
 	private final String code;
+	private final int targetSections;
 
-	RelayProductType(String code) {
+	RelayProductType(String code, int targetSections) {
 		this.code = code;
+		this.targetSections = targetSections;
 	}
 
 	public String getCode() {
 		return code;
+	}
+
+	public int getTargetSections() {
+		return targetSections;
+	}
+
+	public static int targetSectionCount(RelayProductType type) {
+		return type != null ? type.getTargetSections() : DEFAULT_TARGET_SECTIONS;
 	}
 
 	public static RelayProductType fromCode(String code) {

@@ -2,6 +2,7 @@ package com.expnai.relay.features.product.serviceImpl;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -62,21 +63,26 @@ import com.expnai.relay.domain.repository.RelayThreadMessageRepository;
 import com.expnai.relay.domain.repository.RelayUserRepository;
 import com.expnai.relay.features.ai.AiPricingService;
 import com.expnai.relay.features.ai.BrandingLlmService;
+import com.expnai.relay.features.ai.ListingLlmService;
 import com.expnai.relay.features.ai.RelayAiCredentialService;
 import com.expnai.relay.features.auth.security.RelayUserPrincipal;
 import com.expnai.relay.features.product.dto.request.RelayAddSectionRequest;
 import com.expnai.relay.features.product.dto.request.RelayAddSourcesRequest;
 import com.expnai.relay.features.product.dto.request.RelayCreateProductRequest;
+import com.expnai.relay.features.product.dto.request.RelayRenameProductRequest;
 import com.expnai.relay.features.product.dto.request.RelaySourceInputDto;
 import com.expnai.relay.features.product.dto.request.RelaySuggestChangeRequest;
 import com.expnai.relay.features.product.dto.request.RelayUpdateBrandRequest;
+import com.expnai.relay.features.product.dto.response.RelayListingDraftResponse;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
+import com.expnai.relay.features.product.dto.response.RelayProductSelectionResponse;
 import com.expnai.relay.features.product.export.ReadyExportWorker;
 import com.expnai.relay.features.product.ingest.BrandingGenerationWorker;
 import com.expnai.relay.features.product.ingest.ManuscriptGenerationWorker;
 import com.expnai.relay.features.product.ingest.PocketGenerationWorker;
 import com.expnai.relay.features.product.ingest.ProductTypePriceWorker;
 import com.expnai.relay.features.product.ingest.SourceIngestionWorker;
+import com.expnai.relay.features.product.ingest.SourceQualityService;
 import com.expnai.relay.features.product.ingest.StructureGenerationWorker;
 import com.expnai.relay.features.product.mapper.RelayProductMapper;
 import com.expnai.relay.features.product.service.RelayProductService;
@@ -120,6 +126,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	private final RelayWhopCommerceReader whopCommerceReader;
 	private final RelayAiCredentialService aiCredentialService;
 	private final AiPricingService aiPricingService;
+	private final ListingLlmService listingLlmService;
 	private final SourceIngestionWorker sourceIngestionWorker;
 	private final PocketGenerationWorker pocketGenerationWorker;
 	private final ProductTypePriceWorker productTypePriceWorker;
@@ -153,10 +160,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	public ApiResponse<RelayProductResponse> createProduct(RelayCreateProductRequest request) {
 		RelayUser user = requireCurrentUser();
 
-		String name = request != null && request.getName() != null ? request.getName().trim() : "";
-		if (name.isEmpty()) {
-			throw new BusinessRuleException("Product name is required.");
-		}
+		String rawName = request != null && request.getName() != null ? request.getName().trim() : "";
 		String input = request != null && request.getInput() != null ? request.getInput().trim() : "";
 		RelayBuildMode mode = parseBuildMode(request != null ? request.getMode() : null);
 		boolean forElse = request != null && Boolean.TRUE.equals(request.getForElse());
@@ -165,9 +169,13 @@ public class RelayProductServiceImpl implements RelayProductService {
 				? Math.max(0, request.getPendingFilesCount())
 				: 0;
 
+		boolean autoNamed = rawName.isEmpty();
+		String name = autoNamed ? "Untitled product" : rawName;
+
 		RelayProduct product = new RelayProduct();
 		product.setUser(user);
 		product.setName(name);
+		product.setAutoNamed(autoNamed);
 		product.setInput(input);
 		product.setMode(mode);
 		product.setForElse(forElse);
@@ -226,6 +234,25 @@ public class RelayProductServiceImpl implements RelayProductService {
 		}
 
 		return ApiResponse.created("Product created", toResponse(product));
+	}
+
+	@Override
+	@Transactional
+	public ApiResponse<RelayProductResponse> renameProduct(Long productId, RelayRenameProductRequest request) {
+		RelayUser user = requireCurrentUser();
+		RelayProduct product = requireOwnedProduct(productId);
+		String nextName = request != null && request.getName() != null ? request.getName().trim() : "";
+		if (nextName.isEmpty()) {
+			throw new BusinessRuleException("Product name cannot be empty.");
+		}
+		if (nextName.length() > 200) {
+			nextName = nextName.substring(0, 200).trim();
+		}
+		product.setName(nextName);
+		product.setAutoNamed(false);
+		product = productRepository.save(product);
+		recordAudit(user, product, "PRODUCT_RENAME", "Renamed product to: " + nextName);
+		return ApiResponse.ok("Product renamed", toResponse(product));
 	}
 
 	@Override
@@ -659,15 +686,21 @@ public class RelayProductServiceImpl implements RelayProductService {
 		if (!"quality_gate".equals(product.getStepStatus())) {
 			return ApiResponse.ok("OK", toResponse(product));
 		}
+		if (product.getQualityWarning() != null
+				&& product.getQualityWarning().startsWith(SourceQualityService.NON_TEACHABLE_WARNING_PREFIX)) {
+			throw new BusinessRuleException("These sources cannot support a paid digital product. Add teachable sources first.");
+		}
 
 		final String embedKey = aiCredentialService.requireGeminiEmbeddingKey(user.getId());
 		final String chatKey = aiCredentialService.requireChatModelKey(user.getId());
+		long totalPassages = passageRepository.countByProductId(productId);
+		String thinChip = "Built from thin sources (" + totalPassages + " passage" + (totalPassages == 1 ? "" : "s") + ")";
 
 		recordAudit(user, product, "PRODUCT_QUALITY_CONTINUE", "Continued despite source quality gate on step 0");
 		saveThreadMessage(product, RelayThreadWho.YOU, "Continue anyway.");
 
 		product.setQualityOverride(true);
-		product.setQualityWarning(null);
+		product.setQualityWarning(thinChip);
 		product.setCancelled(false);
 		product.setStepStatus("running");
 		product.setStepProgress("[\"Summarising niche, themes, voice and audience\"]");
@@ -734,6 +767,32 @@ public class RelayProductServiceImpl implements RelayProductService {
 			return ApiResponse.ok("OK", toResponse(product));
 		}
 
+		if (product.getBuildStep() == 1) {
+			RelayPocket chosen = product.getChosenPocket();
+			if (chosen == null) {
+				throw new BusinessRuleException("Pick a pocket before continuing.");
+			}
+			recordAudit(user, product, "PRODUCT_APPROVE", "Approved step 1 (pocket " + chosen.getId() + ": " + chosen.getNiche() + ")");
+			saveThreadMessage(product, RelayThreadWho.YOU, "Picked: **" + chosen.getNiche() + "**");
+
+			if (product.isAutoNamed() && chosen.getNiche() != null && !chosen.getNiche().isBlank()) {
+				String nicheName = chosen.getNiche().trim();
+				product.setName(nicheName.length() > 120 ? nicheName.substring(0, 120).trim() : nicheName);
+				product.setAutoNamed(false);
+			}
+
+			product.setBuildStep(2);
+			product.setStepStatus("todo");
+			product.setStepProgress(null);
+			product.setStepNote(null);
+			product = productRepository.save(product);
+
+			saveThreadMessage(product, RelayThreadWho.RELAY,
+					"Next: **Product type**. Press Proceed to check live marketplace prices and pick the format that fits **"
+							+ chosen.getNiche() + "** best.");
+			return ApiResponse.ok("Pocket confirmed", toResponse(product));
+		}
+
 		if (product.getBuildStep() == 2) {
 			if (product.getProductType() == null) {
 				throw new BusinessRuleException("Pick a product type before continuing.");
@@ -756,6 +815,11 @@ public class RelayProductServiceImpl implements RelayProductService {
 		saveThreadMessage(product, RelayThreadWho.YOU, "Looks good.");
 
 		if (product.getBuildStep() == 0) {
+			RelaySourceProfile profile = sourceProfileRepository.findByProductId(productId).orElse(null);
+			if (profile != null && !profile.isViable()) {
+				throw new BusinessRuleException(
+						"These sources cannot support a paid digital product yet. Add more sources before continuing.");
+			}
 			product.setBuildStep(1);
 			product.setStepStatus("todo");
 			product.setStepProgress(null);
@@ -812,43 +876,57 @@ public class RelayProductServiceImpl implements RelayProductService {
 
 	@Override
 	@Transactional
-	public ApiResponse<RelayProductResponse> choosePocket(Long productId, Long pocketId) {
+	public ApiResponse<RelayProductSelectionResponse> choosePocket(Long productId, Long pocketId) {
+		if (pocketId == null) {
+			throw new BusinessRuleException("Pocket ID is required.");
+		}
 		RelayUser user = requireCurrentUser();
 		RelayProduct product = requireOwnedProduct(productId);
 
-		if (product.getStage() != RelayProductStage.BUILD || product.getBuildStep() != 1) {
-			return ApiResponse.ok("OK", toResponse(product));
+		if (product.getStage() != RelayProductStage.BUILD) {
+			return ApiResponse.ok("OK", toSelectionResponse(product));
+		}
+
+		boolean onPocketReview = product.getBuildStep() == 1 && "review".equals(product.getStepStatus());
+		boolean canReopenFromType = product.getBuildStep() == 2
+				&& "todo".equals(product.getStepStatus())
+				&& product.getProductType() == null
+				&& (product.getTypePriceSuggestionsJson() == null || product.getTypePriceSuggestionsJson().isBlank());
+		if (!onPocketReview && !canReopenFromType) {
+			return ApiResponse.ok("OK", toSelectionResponse(product));
 		}
 
 		RelayPocket pocket = pocketRepository.findByIdAndProductId(pocketId, productId)
 				.orElseThrow(() -> new ResourceNotFoundException("Pocket not found"));
 
-		recordAudit(user, product, "PRODUCT_CHOOSE_POCKET", "Chose pocket " + pocket.getId() + ": " + pocket.getNiche());
-		saveThreadMessage(product, RelayThreadWho.YOU, "Picked: **" + pocket.getNiche() + "**");
+		if (onPocketReview
+				&& product.getChosenPocket() != null
+				&& pocket.getId().equals(product.getChosenPocket().getId())) {
+			return ApiResponse.ok("Pocket already selected", toSelectionResponse(product));
+		}
+
+		recordAudit(user, product, "PRODUCT_CHOOSE_POCKET", "Selected pocket " + pocket.getId() + ": " + pocket.getNiche());
 
 		product.setChosenPocket(pocket);
 		product.setTypePriceSuggestionsJson(null);
-		product.setBuildStep(2);
-		product.setStepStatus("todo");
+		// Stay on / return to Profitable pockets review so the user can re-pick before confirming
+		product.setBuildStep(1);
+		product.setStepStatus("review");
 		product.setStepProgress(null);
 		product.setStepNote(null);
 		product = productRepository.save(product);
 
-		saveThreadMessage(product, RelayThreadWho.RELAY,
-				"Next: **Product type**. Press Proceed to check live marketplace prices and pick the format that fits **"
-						+ pocket.getNiche() + "** best.");
-
-		return ApiResponse.ok("Pocket chosen", toResponse(product));
+		return ApiResponse.ok("Pocket selected", toSelectionResponse(product));
 	}
 
 	@Override
 	@Transactional
-	public ApiResponse<RelayProductResponse> chooseType(Long productId, String typeId) {
+	public ApiResponse<RelayProductSelectionResponse> chooseType(Long productId, String typeId) {
 		RelayUser user = requireCurrentUser();
 		RelayProduct product = requireOwnedProduct(productId);
 
 		if (product.getStage() != RelayProductStage.BUILD) {
-			return ApiResponse.ok("OK", toResponse(product));
+			return ApiResponse.ok("OK", toSelectionResponse(product));
 		}
 
 		boolean onTypeReview = product.getBuildStep() == 2 && "review".equals(product.getStepStatus());
@@ -856,7 +934,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 				&& "todo".equals(product.getStepStatus())
 				&& sectionRepository.findByProductIdOrderBySortOrderAscIdAsc(productId).isEmpty();
 		if (!onTypeReview && !canReopenFromStructure) {
-			return ApiResponse.ok("OK", toResponse(product));
+			return ApiResponse.ok("OK", toSelectionResponse(product));
 		}
 
 		final RelayProductType chosenType;
@@ -871,7 +949,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 		}
 
 		if (chosenType.equals(product.getProductType()) && onTypeReview) {
-			return ApiResponse.ok("Product type already selected", toResponse(product));
+			return ApiResponse.ok("Product type already selected", toSelectionResponse(product));
 		}
 
 		recordAudit(user, product, "PRODUCT_CHOOSE_TYPE", "Selected product type " + chosenType.getCode());
@@ -884,7 +962,20 @@ public class RelayProductServiceImpl implements RelayProductService {
 		product.setStepNote(null);
 		product = productRepository.save(product);
 
-		return ApiResponse.ok("Product type selected", toResponse(product));
+		return ApiResponse.ok("Product type selected", toSelectionResponse(product));
+	}
+
+	private RelayProductSelectionResponse toSelectionResponse(RelayProduct product) {
+		return new RelayProductSelectionResponse(
+				String.valueOf(product.getId()),
+				product.getProductType() != null
+						? product.getProductType().getCode().toLowerCase(Locale.ROOT)
+						: null,
+				product.getChosenPocket() != null ? String.valueOf(product.getChosenPocket().getId()) : null,
+				product.getBuildStep(),
+				product.getStepStatus() != null
+						? product.getStepStatus().toLowerCase(Locale.ROOT)
+						: "todo");
 	}
 
 	private String productTypeLabel(RelayProductType type) {
@@ -1012,11 +1103,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 			if (request.getTitle() != null && !request.getTitle().isBlank()) {
 				brand.setTitle(request.getTitle().trim());
 			}
-			if (request.getPalette() != null) {
-				int palette = Math.max(0, Math.min(2, request.getPalette()));
-				brand.setPaletteIndex(palette);
-				brand.setTypePair(BrandingLlmService.typePairForPalette(palette));
-			}
+			// Palette index switching is intentionally disabled (AI generates custom palettes; use Suggest a change to regenerate)
 			if (request.getCover() != null) {
 				int cover = Math.max(0, Math.min(2, request.getCover()));
 				brand.setCoverVariant(cover);
@@ -1025,6 +1112,27 @@ public class RelayProductServiceImpl implements RelayProductService {
 		}
 
 		return ApiResponse.ok("Brand updated", toResponse(product));
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public ApiResponse<RelayListingDraftResponse> generateListingDraft(Long productId) {
+		RelayUser user = requireCurrentUser();
+		RelayProduct product = requireOwnedProduct(productId);
+		RelayBrand brand = brandRepository.findByProductId(productId).orElse(null);
+		RelayPocket pocket = product.getChosenPocket() != null
+				? pocketRepository.findById(product.getChosenPocket().getId()).orElse(null)
+				: null;
+
+		String chatKey = "";
+		try {
+			chatKey = aiCredentialService.requireChatModelKey(user.getId());
+		}
+		catch (BusinessRuleException ignored) {
+		}
+
+		RelayListingDraftResponse draft = listingLlmService.generateDraft(chatKey, product, brand, pocket);
+		return ApiResponse.ok("Listing draft ready", draft);
 	}
 
 	@Override
@@ -1283,12 +1391,42 @@ public class RelayProductServiceImpl implements RelayProductService {
 		return emitter;
 	}
 
+	private String normalizeAndValidateLinkUrl(String rawUrl) {
+		if (rawUrl == null || rawUrl.isBlank()) {
+			throw new BusinessRuleException("We couldn't read this link");
+		}
+		String trimmed = rawUrl.trim();
+		if (trimmed.contains(" ") || trimmed.contains("\n") || trimmed.contains("\r") || trimmed.contains("\t")) {
+			throw new BusinessRuleException("We couldn't read this link");
+		}
+		String candidate = (trimmed.startsWith("http://") || trimmed.startsWith("https://"))
+				? trimmed
+				: "https://" + trimmed;
+		try {
+			URI uri = URI.create(candidate);
+			String host = uri.getHost();
+			if (host == null || host.isBlank() || !host.contains(".")) {
+				throw new BusinessRuleException("We couldn't read this link");
+			}
+			return candidate;
+		}
+		catch (BusinessRuleException ex) {
+			throw ex;
+		}
+		catch (Exception ex) {
+			throw new BusinessRuleException("We couldn't read this link");
+		}
+	}
+
 	private RelaySource createSourceEntity(RelayProduct product, RelaySourceInputDto dto) {
 		if (dto == null) {
 			return null;
 		}
 		String url = dto.getUrl() != null ? dto.getUrl().trim() : null;
 		RelaySourceKind kind = resolveKind(dto.getKind(), url);
+		if (kind == RelaySourceKind.WEB || kind == RelaySourceKind.YOUTUBE) {
+			url = normalizeAndValidateLinkUrl(url);
+		}
 		String name = (dto.getName() != null && !dto.getName().isBlank())
 				? dto.getName().trim()
 				: inferLinkName(kind, url != null ? url : "Source");

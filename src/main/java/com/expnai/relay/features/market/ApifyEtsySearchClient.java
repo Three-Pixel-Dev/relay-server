@@ -20,6 +20,7 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.features.market.MarketResearchPack.EtsyKeywordResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -64,6 +65,8 @@ public class ApifyEtsySearchClient {
 			String normalizedActor = (actorId != null && !actorId.isBlank())
 					? actorId.trim().replace('/', '~')
 					: "themineworks~etsy-search-scraper";
+			RelayTrace.scrape("apify etsy start actor={} keyword='{}' maxItems={}",
+					normalizedActor, cleanKeyword, SAMPLE_LIMIT);
 			String url = APIFY_BASE_URL
 					+ URLEncoder.encode(normalizedActor, StandardCharsets.UTF_8)
 					+ "/run-sync-get-dataset-items?token="
@@ -163,6 +166,8 @@ public class ApifyEtsySearchClient {
 
 			int finalCount = totalResults > 0 ? totalResults : listingCount;
 			String queriedAt = LocalDate.now(ZoneOffset.UTC).toString();
+			RelayTrace.scrape("apify etsy done keyword='{}' listings={} sampled={} medianPrice={} {}",
+					cleanKeyword, finalCount, listingCount, medianPrice, currency);
 			return new EtsyKeywordResult(
 					cleanKeyword,
 					finalCount,

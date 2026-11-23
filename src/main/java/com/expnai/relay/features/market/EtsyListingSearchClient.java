@@ -18,6 +18,7 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.features.market.MarketResearchPack.EtsyKeywordResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,6 +53,7 @@ public class EtsyListingSearchClient {
 		}
 		try {
 			String base = etsyBaseUrl.replaceAll("/+$", "");
+			RelayTrace.scrape("etsy api start keyword='{}' limit={}", keyword.trim(), SAMPLE_LIMIT);
 			String url = base + "/listings/active?keywords="
 					+ URLEncoder.encode(keyword.trim(), StandardCharsets.UTF_8)
 					+ "&limit=" + SAMPLE_LIMIT
@@ -122,6 +124,8 @@ public class EtsyListingSearchClient {
 			}
 
 			String queriedAt = LocalDate.now(ZoneOffset.UTC).toString();
+			RelayTrace.scrape("etsy api done keyword='{}' activeCount={} medianPrice={} {}",
+					keyword.trim(), count, medianPrice, currency);
 			return new EtsyKeywordResult(
 					keyword.trim(),
 					count,

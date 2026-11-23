@@ -19,6 +19,8 @@ public class SourceQualityService {
 	public static final int MIN_PASSAGES_FOR_QUALITY = 20;
 	public static final String CLIENT_QUALITY_WARNING =
 			"This source is too thin to build a product from. Add more sources or tell us what you know.";
+	public static final String NON_TEACHABLE_WARNING_PREFIX =
+			"These sources cannot support a paid digital product.";
 
 	private final ContentTeachabilityClassifier contentTeachabilityClassifier;
 
@@ -59,7 +61,7 @@ public class SourceQualityService {
 			String reason = (classified.reason() != null && !classified.reason().isBlank())
 					? classified.reason()
 					: "Sources were classified as non-teachable (" + classified.contentType() + ").";
-			String warningMessage = CLIENT_QUALITY_WARNING + " (" + reason + ")";
+			String warningMessage = NON_TEACHABLE_WARNING_PREFIX + " " + reason + " Add teachable sources to continue.";
 			return new QualityCheckResult(false, true, List.of(reason), warningMessage);
 		}
 

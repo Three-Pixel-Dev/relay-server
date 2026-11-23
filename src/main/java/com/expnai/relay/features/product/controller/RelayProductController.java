@@ -24,9 +24,14 @@ import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.features.product.dto.request.RelayAddSectionRequest;
 import com.expnai.relay.features.product.dto.request.RelayAddSourcesRequest;
 import com.expnai.relay.features.product.dto.request.RelayCreateProductRequest;
+import com.expnai.relay.features.product.dto.request.RelayRenameProductRequest;
+import com.expnai.relay.features.product.dto.request.RelaySelectPocketRequest;
+import com.expnai.relay.features.product.dto.request.RelaySelectTypeRequest;
 import com.expnai.relay.features.product.dto.request.RelaySuggestChangeRequest;
 import com.expnai.relay.features.product.dto.request.RelayUpdateBrandRequest;
+import com.expnai.relay.features.product.dto.response.RelayListingDraftResponse;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
+import com.expnai.relay.features.product.dto.response.RelayProductSelectionResponse;
 import com.expnai.relay.features.product.service.RelayProductService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -59,6 +64,14 @@ public class RelayProductController {
 	@Operation(summary = "Get product detail by ID")
 	public ApiResponse<RelayProductResponse> getProduct(@PathVariable Long id) {
 		return productService.getProduct(id);
+	}
+
+	@PatchMapping("/{id}/name")
+	@Operation(summary = "Rename a product")
+	public ApiResponse<RelayProductResponse> renameProduct(
+			@PathVariable Long id,
+			@RequestBody RelayRenameProductRequest request) {
+		return productService.renameProduct(id, request);
 	}
 
 	@GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -123,17 +136,33 @@ public class RelayProductController {
 		return productService.approve(id);
 	}
 
+	@PatchMapping("/{id}/pocket")
+	@Operation(summary = "Select or switch profitable pocket on step 1 review (lightweight response)")
+	public ApiResponse<RelayProductSelectionResponse> patchPocket(
+			@PathVariable Long id,
+			@RequestBody RelaySelectPocketRequest request) {
+		return productService.choosePocket(id, request != null ? request.getPocketId() : null);
+	}
+
+	@PatchMapping("/{id}/type")
+	@Operation(summary = "Select or switch product type on step 2 review (lightweight response)")
+	public ApiResponse<RelayProductSelectionResponse> patchType(
+			@PathVariable Long id,
+			@RequestBody RelaySelectTypeRequest request) {
+		return productService.chooseType(id, request != null ? request.getTypeId() : null);
+	}
+
 	@PostMapping("/{id}/pockets/{pocketId}/choose")
-	@Operation(summary = "Choose a profitable pocket on step 1 (advances to step 2)")
-	public ApiResponse<RelayProductResponse> choosePocket(
+	@Operation(summary = "Choose a profitable pocket on step 1 (lightweight response)")
+	public ApiResponse<RelayProductSelectionResponse> choosePocket(
 			@PathVariable Long id,
 			@PathVariable Long pocketId) {
 		return productService.choosePocket(id, pocketId);
 	}
 
 	@PostMapping("/{id}/types/{typeId}/choose")
-	@Operation(summary = "Choose a product type on step 2 (advances to step 3)")
-	public ApiResponse<RelayProductResponse> chooseType(
+	@Operation(summary = "Choose a product type on step 2 (lightweight response)")
+	public ApiResponse<RelayProductSelectionResponse> chooseType(
 			@PathVariable Long id,
 			@PathVariable String typeId) {
 		return productService.chooseType(id, typeId);
@@ -169,6 +198,12 @@ public class RelayProductController {
 			@PathVariable Long id,
 			@RequestBody RelayUpdateBrandRequest request) {
 		return productService.updateBrand(id, request);
+	}
+
+	@PostMapping("/{id}/listing-draft")
+	@Operation(summary = "Generate an AI storefront listing draft (title, headline, price) from existing product research")
+	public ApiResponse<RelayListingDraftResponse> generateListingDraft(@PathVariable Long id) {
+		return productService.generateListingDraft(id);
 	}
 
 	@GetMapping("/{id}/files/{fileId}/download")

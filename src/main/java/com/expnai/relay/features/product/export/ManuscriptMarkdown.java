@@ -59,7 +59,7 @@ public class ManuscriptMarkdown {
 	public record TextRun(String text, boolean bold, boolean italic, boolean code, boolean highlight) {
 	}
 
-	public sealed interface MdBlock permits HeadingBlock, ParagraphBlock, ListItemBlock, QuoteBlock, RuleBlock, MdTableBlock {
+	public sealed interface MdBlock permits HeadingBlock, ParagraphBlock, ListItemBlock, QuoteBlock, RuleBlock, MdTableBlock, CodeBlock {
 	}
 
 	public record HeadingBlock(int level, List<TextRun> runs) implements MdBlock {
@@ -78,6 +78,9 @@ public class ManuscriptMarkdown {
 	}
 
 	public record MdTableBlock(List<List<TextRun>> headers, List<List<List<TextRun>>> rows) implements MdBlock {
+	}
+
+	public record CodeBlock(List<String> lines) implements MdBlock {
 	}
 
 	public Document parse(String md) {
@@ -145,21 +148,46 @@ public class ManuscriptMarkdown {
 				out.add(new RuleBlock());
 			}
 			else if (child instanceof FencedCodeBlock codeBlock) {
-				String codeText = codeBlock.getContentChars().toString().trim();
-				if (!codeText.isEmpty()) {
-					out.add(new ParagraphBlock(List.of(new TextRun(codeText, false, false, true, false))));
+				List<String> lines = extractCodeLines(codeBlock.getContentChars().toString());
+				if (!lines.isEmpty()) {
+					out.add(new CodeBlock(lines));
 				}
 			}
 			else if (child instanceof IndentedCodeBlock codeBlock) {
-				String codeText = codeBlock.getContentChars().toString().trim();
-				if (!codeText.isEmpty()) {
-					out.add(new ParagraphBlock(List.of(new TextRun(codeText, false, false, true, false))));
+				List<String> lines = extractCodeLines(codeBlock.getContentChars().toString());
+				if (!lines.isEmpty()) {
+					out.add(new CodeBlock(lines));
 				}
 			}
 			else if (child.hasChildren()) {
 				collectBlocks(child, out, listDepth);
 			}
 		}
+	}
+
+	private List<String> extractCodeLines(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return List.of();
+		}
+		String normalized = raw.replace("\r\n", "\n").replace('\r', '\n');
+		String[] split = normalized.split("\n", -1);
+		int start = 0;
+		int end = split.length - 1;
+		while (start <= end && split[start].isBlank()) {
+			start++;
+		}
+		while (end >= start && split[end].isBlank()) {
+			end--;
+		}
+		if (start > end) {
+			return List.of();
+		}
+		List<String> lines = new ArrayList<>(end - start + 1);
+		for (int i = start; i <= end; i++) {
+			// Preserve leading/internal spaces; strip only trailing spaces
+			lines.add(split[i].replaceFirst("[ \\t]+$", ""));
+		}
+		return List.copyOf(lines);
 	}
 
 	private MdTableBlock extractTable(com.vladsch.flexmark.ext.tables.TableBlock flexTable) {

@@ -1,6 +1,8 @@
 package com.expnai.relay.features.product.export;
 
 import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +14,8 @@ import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import javax.imageio.ImageIO;
+
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -22,6 +26,7 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.poi.xwpf.usermodel.Borders;
 import org.apache.poi.xwpf.usermodel.BreakType;
+import org.apache.poi.xwpf.usermodel.Document;
 import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
@@ -34,6 +39,8 @@ import org.springframework.stereotype.Component;
 import com.expnai.relay.domain.entity.RelayBrand;
 import com.expnai.relay.domain.entity.RelaySection;
 import com.expnai.relay.domain.enums.RelayProductType;
+import com.expnai.relay.features.ai.BrandingLlmService;
+import com.expnai.relay.features.product.export.ManuscriptMarkdown.CodeBlock;
 import com.expnai.relay.features.product.export.ManuscriptMarkdown.HeadingBlock;
 import com.expnai.relay.features.product.export.ManuscriptMarkdown.ListItemBlock;
 import com.expnai.relay.features.product.export.ManuscriptMarkdown.MdBlock;
@@ -42,6 +49,8 @@ import com.expnai.relay.features.product.export.ManuscriptMarkdown.ParagraphBloc
 import com.expnai.relay.features.product.export.ManuscriptMarkdown.QuoteBlock;
 import com.expnai.relay.features.product.export.ManuscriptMarkdown.RuleBlock;
 import com.expnai.relay.features.product.export.ManuscriptMarkdown.TextRun;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
 
@@ -57,6 +66,7 @@ public class ProductDocumentRenderer {
 	};
 
 	private final ManuscriptMarkdown manuscriptMarkdown;
+	private final ObjectMapper objectMapper;
 
 	public byte[] renderPdf(
 			RelayBrand brand,
@@ -344,6 +354,9 @@ public class ProductDocumentRenderer {
 			List<List<StyledWord>> lines = wrapStyledRuns(para.runs(), cursor.fonts, size, color, width);
 			drawStyledLines(cursor, lines, x, lineH);
 			cursor.y -= (inQuote ? 5f : 8f);
+		}
+		else if (block instanceof CodeBlock codeBlock) {
+			renderPdfCodeBlock(cursor, codeBlock, x, width);
 		}
 		else if (block instanceof ListItemBlock item) {
 			float size = 11f;
@@ -711,6 +724,157 @@ public class ProductDocumentRenderer {
 		}
 	}
 
+	private void renderPdfCodeBlock(PdfCursor cursor, CodeBlock codeBlock, float x, float width)
+			throws IOException {
+		if (codeBlock == null || codeBlock.lines() == null || codeBlock.lines().isEmpty()) {
+			return;
+		}
+		float fontSize = 9.2f;
+		float lineH = 13.5f;
+		float padX = 10f;
+		float innerW = Math.max(80f, width - padX * 2f);
+		PDFont codeFont = cursor.fonts.code();
+
+		List<String> renderedLines = new ArrayList<>();
+		for (String rawLine : codeBlock.lines()) {
+			String safe = toPdfSafeCodeLine(rawLine);
+			renderedLines.addAll(wrapCodeLine(safe, codeFont, fontSize, innerW));
+		}
+		if (renderedLines.isEmpty()) {
+			return;
+		}
+
+		cursor.y -= 4f;
+		for (String line : renderedLines) {
+			cursor.ensureSpace(lineH + 4f);
+			// Full-width light strip + subtle left accent bar (no per-word gray chips)
+			cursor.cs.setNonStrokingColor(cursor.palette.bg());
+			cursor.cs.addRect(x, cursor.y - 3.5f, width, lineH);
+			cursor.cs.fill();
+			cursor.cs.setNonStrokingColor(cursor.palette.soft());
+			cursor.cs.addRect(x, cursor.y - 3.5f, 2.5f, lineH);
+			cursor.cs.fill();
+
+			if (!line.isEmpty()) {
+				cursor.cs.beginText();
+				cursor.cs.setFont(codeFont, fontSize);
+				cursor.cs.setNonStrokingColor(cursor.palette.ink());
+				cursor.cs.newLineAtOffset(x + padX, cursor.y);
+				cursor.cs.showText(line);
+				cursor.cs.endText();
+			}
+			cursor.y -= lineH;
+		}
+		cursor.y -= 8f;
+	}
+
+	private List<String> wrapCodeLine(String line, PDFont font, float fontSize, float maxWidth)
+			throws IOException {
+		if (line == null || line.isEmpty()) {
+			return List.of("");
+		}
+		if (measureTextWidth(font, fontSize, line) <= maxWidth) {
+			return List.of(line);
+		}
+		List<String> out = new ArrayList<>();
+		StringBuilder current = new StringBuilder();
+		int i = 0;
+		while (i < line.length()) {
+			// Grab either a run of spaces or a run of non-space characters
+			boolean isSpace = line.charAt(i) == ' ';
+			int j = i + 1;
+			while (j < line.length() && (line.charAt(j) == ' ') == isSpace) {
+				j++;
+			}
+			String token = line.substring(i, j);
+			i = j;
+
+			String candidate = current + token;
+			if (measureTextWidth(font, fontSize, candidate) <= maxWidth) {
+				current.append(token);
+				continue;
+			}
+
+			if (!current.isEmpty()) {
+				out.add(current.toString());
+				current.setLength(0);
+				if (isSpace) {
+					continue;
+				}
+			}
+
+			// Single token wider than maxWidth (e.g. long $___________ blank): split by characters
+			if (measureTextWidth(font, fontSize, token) <= maxWidth) {
+				current.append(token);
+			}
+			else {
+				for (int k = 0; k < token.length(); k++) {
+					char ch = token.charAt(k);
+					String next = current.toString() + ch;
+					if (!current.isEmpty() && measureTextWidth(font, fontSize, next) > maxWidth) {
+						out.add(current.toString());
+						current.setLength(0);
+					}
+					current.append(ch);
+				}
+			}
+		}
+		if (!current.isEmpty()) {
+			out.add(current.toString());
+		}
+		return out.isEmpty() ? List.of("") : out;
+	}
+
+	private float measureTextWidth(PDFont font, float fontSize, String text) throws IOException {
+		if (text == null || text.isEmpty()) {
+			return 0f;
+		}
+		return font.getStringWidth(text) / 1000f * fontSize;
+	}
+
+	private String toPdfSafeCodeLine(String input) {
+		if (input == null || input.isEmpty()) {
+			return "";
+		}
+		String normalized = input
+				.replace("\t", "    ")
+				.replace('\u2018', '\'')
+				.replace('\u2019', '\'')
+				.replace('\u201C', '"')
+				.replace('\u201D', '"')
+				.replace('\u2014', '-')
+				.replace('\u2013', '-')
+				.replace("\u2026", "...")
+				.replace('\u2022', '*')
+				.replace('\u00A0', ' ')
+				.replace("\u2192", "->")
+				.replace("\u2190", "<-")
+				.replace('\u2191', '^')
+				.replace('\u2193', 'v')
+				.replace('\u2502', '|')
+				.replace('\u2500', '-')
+				.replace('\u250C', '+')
+				.replace('\u2510', '+')
+				.replace('\u2514', '+')
+				.replace('\u2518', '+')
+				.replace('\u251C', '+')
+				.replace('\u2524', '+')
+				.replace('\u252C', '+')
+				.replace('\u2534', '+')
+				.replace('\u253C', '+');
+		StringBuilder sb = new StringBuilder(normalized.length());
+		for (int i = 0; i < normalized.length(); i++) {
+			char c = normalized.charAt(i);
+			if ((c >= 32 && c <= 126) || (c >= 160 && c <= 255)) {
+				sb.append(c);
+			}
+			else if (Character.isWhitespace(c)) {
+				sb.append(' ');
+			}
+		}
+		return sb.toString();
+	}
+
 	private String toPdfSafeTextPreserveSpaces(String input) {
 		if (input == null) {
 			return "";
@@ -739,30 +903,42 @@ public class ProductDocumentRenderer {
 	}
 
 	public byte[] renderDocx(RelayBrand brand, List<RelaySection> sections) throws IOException {
+		return renderDocx(brand, sections, null, Map.of());
+	}
+
+	public byte[] renderDocx(
+			RelayBrand brand,
+			List<RelaySection> sections,
+			byte[] coverImageBytes,
+			Map<Long, byte[]> sectionGraphics) throws IOException {
 		String title = safeTitle(brand);
 		String[] cols = paletteColors(brand);
 		String accentHex = cols[2].replace("#", "");
 		String inkHex = cols[1].replace("#", "");
 		String mutedHex = cols[4].replace("#", "");
+		Map<Long, byte[]> safeGraphics = sectionGraphics != null ? sectionGraphics : Map.of();
 
 		try (XWPFDocument doc = new XWPFDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-			// Cover title
-			XWPFParagraph coverTitle = doc.createParagraph();
-			coverTitle.setAlignment(ParagraphAlignment.LEFT);
-			coverTitle.setSpacingBefore(1400);
-			coverTitle.setSpacingAfter(240);
-			XWPFRun titleRun = coverTitle.createRun();
-			titleRun.setText(title);
-			titleRun.setBold(true);
-			titleRun.setFontSize(28);
-			titleRun.setColor(inkHex);
+			// Cover page: primary cover picture when bytes exist, else clean text cover fallback
+			boolean embeddedCover = embedDocxImage(doc, coverImageBytes, 6.5, 8.5, "cover");
+			if (!embeddedCover) {
+				XWPFParagraph coverTitle = doc.createParagraph();
+				coverTitle.setAlignment(ParagraphAlignment.LEFT);
+				coverTitle.setSpacingBefore(1400);
+				coverTitle.setSpacingAfter(240);
+				XWPFRun titleRun = coverTitle.createRun();
+				titleRun.setText(title);
+				titleRun.setBold(true);
+				titleRun.setFontSize(28);
+				titleRun.setColor(inkHex);
 
-			XWPFParagraph coverSub = doc.createParagraph();
-			coverSub.setSpacingAfter(400);
-			XWPFRun subRun = coverSub.createRun();
-			subRun.setText(sections.size() + " sections");
-			subRun.setFontSize(12);
-			subRun.setColor(accentHex);
+				XWPFParagraph coverSub = doc.createParagraph();
+				coverSub.setSpacingAfter(400);
+				XWPFRun subRun = coverSub.createRun();
+				subRun.setText(sections.size() + " sections");
+				subRun.setFontSize(12);
+				subRun.setColor(accentHex);
+			}
 
 			int idx = 0;
 			for (RelaySection section : sections) {
@@ -796,6 +972,11 @@ public class ProductDocumentRenderer {
 					momentRun.setColor(mutedHex);
 				}
 
+				byte[] secImgBytes = section.getId() != null ? safeGraphics.get(section.getId()) : null;
+				if (secImgBytes != null && secImgBytes.length > 0) {
+					embedDocxImage(doc, secImgBytes, 6.0, 2.3, "section-" + idx);
+				}
+
 				for (MdBlock block : manuscriptMarkdown.toPdfBlocks(section.getText())) {
 					appendDocxBlock(doc, block, inkHex, accentHex, mutedHex, false);
 				}
@@ -804,6 +985,63 @@ public class ProductDocumentRenderer {
 			doc.write(out);
 			return out.toByteArray();
 		}
+	}
+
+	private boolean embedDocxImage(
+			XWPFDocument doc,
+			byte[] bytes,
+			double maxWidthIn,
+			double maxHeightIn,
+			String filenameBase) {
+		if (bytes == null || bytes.length < 4) {
+			return false;
+		}
+		int pictureType = detectDocxPictureType(bytes);
+		if (pictureType < 0) {
+			return false;
+		}
+		try {
+			BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
+			if (img == null || img.getWidth() <= 0 || img.getHeight() <= 0) {
+				return false;
+			}
+			double aspect = (double) img.getWidth() / (double) img.getHeight();
+			double drawW = maxWidthIn;
+			double drawH = drawW / aspect;
+			if (drawH > maxHeightIn) {
+				drawH = maxHeightIn;
+				drawW = drawH * aspect;
+			}
+			int emuW = (int) Math.round(drawW * 914400.0);
+			int emuH = (int) Math.round(drawH * 914400.0);
+			String ext = pictureType == Document.PICTURE_TYPE_JPEG ? ".jpg" : ".png";
+
+			XWPFParagraph p = doc.createParagraph();
+			p.setAlignment(ParagraphAlignment.CENTER);
+			p.setSpacingAfter(180);
+			XWPFRun r = p.createRun();
+			r.addPicture(new ByteArrayInputStream(bytes), pictureType, filenameBase + ext, emuW, emuH);
+			return true;
+		}
+		catch (Exception ignored) {
+			return false;
+		}
+	}
+
+	private int detectDocxPictureType(byte[] bytes) {
+		if (bytes.length >= 4
+				&& (bytes[0] & 0xFF) == 0x89
+				&& (bytes[1] & 0xFF) == 0x50
+				&& (bytes[2] & 0xFF) == 0x4E
+				&& (bytes[3] & 0xFF) == 0x47) {
+			return Document.PICTURE_TYPE_PNG;
+		}
+		if (bytes.length >= 2
+				&& (bytes[0] & 0xFF) == 0xFF
+				&& (bytes[1] & 0xFF) == 0xD8) {
+			return Document.PICTURE_TYPE_JPEG;
+		}
+		return -1;
 	}
 
 	private void appendDocxBlock(
@@ -836,6 +1074,22 @@ public class ProductDocumentRenderer {
 				p.setBorderLeft(Borders.SINGLE);
 			}
 			appendDocxRuns(p, para.runs(), inQuote ? mutedHex : inkHex, inQuote);
+		}
+		else if (block instanceof CodeBlock codeBlock) {
+			List<String> lines = codeBlock.lines();
+			for (int i = 0; i < lines.size(); i++) {
+				String line = lines.get(i);
+				XWPFParagraph p = doc.createParagraph();
+				p.setSpacingBefore(i == 0 ? 80 : 0);
+				p.setSpacingAfter(i == lines.size() - 1 ? 140 : 20);
+				p.setIndentationLeft(320);
+				p.setBorderLeft(Borders.SINGLE);
+				XWPFRun r = p.createRun();
+				r.setFontFamily("Courier New");
+				r.setFontSize(9);
+				r.setColor(inkHex);
+				r.setText(line.isEmpty() ? " " : line);
+			}
 		}
 		else if (block instanceof ListItemBlock item) {
 			XWPFParagraph p = doc.createParagraph();
@@ -1396,6 +1650,29 @@ public class ProductDocumentRenderer {
 	}
 
 	private String[] paletteColors(RelayBrand brand) {
+		if (brand != null && brand.getPaletteJson() != null && !brand.getPaletteJson().isBlank()) {
+			try {
+				JsonNode root = objectMapper.readTree(brand.getPaletteJson());
+				JsonNode colsNode = root.path("cols");
+				if (colsNode.isArray() && colsNode.size() >= 5) {
+					String[] custom = new String[5];
+					boolean allValid = true;
+					for (int i = 0; i < 5; i++) {
+						String hex = BrandingLlmService.normalizeHex(colsNode.get(i).asText(""));
+						if (hex == null) {
+							allValid = false;
+							break;
+						}
+						custom[i] = hex;
+					}
+					if (allValid) {
+						return custom;
+					}
+				}
+			}
+			catch (Exception ignored) {
+			}
+		}
 		int idx = (brand != null && brand.getPaletteIndex() != null)
 				? Math.max(0, Math.min(PALETTES.length - 1, brand.getPaletteIndex()))
 				: 0;

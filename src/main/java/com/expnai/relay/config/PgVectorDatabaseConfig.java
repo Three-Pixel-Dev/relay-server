@@ -68,6 +68,9 @@ public class PgVectorDatabaseConfig {
 				if (columnUdtName(conn, "relay_product", "name") == null) {
 					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS name VARCHAR(255)");
 				}
+				if (columnUdtName(conn, "relay_product", "auto_named") == null) {
+					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS auto_named BOOLEAN NOT NULL DEFAULT false");
+				}
 				if (columnUdtName(conn, "relay_product", "step_status") == null) {
 					stmt.execute("ALTER TABLE relay_product ADD COLUMN IF NOT EXISTS step_status VARCHAR(20) NOT NULL DEFAULT 'todo'");
 				}
@@ -105,6 +108,16 @@ public class PgVectorDatabaseConfig {
 				if (columnUdtName(conn, "relay_brand", "page_graphics_json") == null) {
 					stmt.execute("ALTER TABLE relay_brand ADD COLUMN IF NOT EXISTS page_graphics_json JSONB");
 				}
+				if (columnUdtName(conn, "relay_brand", "palette_json") == null) {
+					stmt.execute("ALTER TABLE relay_brand ADD COLUMN IF NOT EXISTS palette_json JSONB");
+				}
+				if (columnUdtName(conn, "relay_brand", "cover_directions_json") == null) {
+					stmt.execute("ALTER TABLE relay_brand ADD COLUMN IF NOT EXISTS cover_directions_json JSONB");
+				}
+			}
+
+			if (tableExists(conn, "relay_source_profile") && columnUdtName(conn, "relay_source_profile", "viable") == null) {
+				stmt.execute("ALTER TABLE relay_source_profile ADD COLUMN IF NOT EXISTS viable BOOLEAN NOT NULL DEFAULT true");
 			}
 		}
 		catch (Exception ex) {

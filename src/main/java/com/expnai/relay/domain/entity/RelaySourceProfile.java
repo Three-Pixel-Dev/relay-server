@@ -51,4 +51,7 @@ public class RelaySourceProfile extends MasterEntity {
 
 	@Column(name = "passages_count")
 	private Integer passagesCount;
+
+	@Column(name = "viable", nullable = false)
+	private boolean viable = true;
 }

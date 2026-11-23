@@ -2,12 +2,16 @@ package com.expnai.relay.features.ai;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.domain.entity.RelayProduct;
 import com.expnai.relay.domain.enums.RelayProductStage;
+import com.expnai.relay.domain.enums.RelayProductType;
 import com.expnai.relay.features.ai.AiModelPricingCatalog.ModelRates;
 
 import lombok.RequiredArgsConstructor;
@@ -105,50 +109,90 @@ public class AiPricingService {
 
 		int totalIn = 0;
 		int totalOut = 0;
+		List<String> included = RelayTrace.isEstimateEnabled() ? new ArrayList<>() : null;
 
 		// Step 0: Sources (only if sources exist and not yet summarized)
 		if (cur == 0 && !currentCompleted && sourcesCount > 0) {
 			totalIn += SOURCES_EST_INPUT_TOKENS;
 			totalOut += SOURCES_EST_OUTPUT_TOKENS;
+			if (included != null) {
+				included.add("sources(" + SOURCES_EST_INPUT_TOKENS + "/" + SOURCES_EST_OUTPUT_TOKENS + ")");
+			}
 		}
 		// Step 1: Profitable pockets
 		if (cur < 1 || (cur == 1 && !currentCompleted)) {
 			totalIn += POCKETS_EST_INPUT_TOKENS;
 			totalOut += POCKETS_EST_OUTPUT_TOKENS;
+			if (included != null) {
+				included.add("pockets(" + POCKETS_EST_INPUT_TOKENS + "/" + POCKETS_EST_OUTPUT_TOKENS + ")");
+			}
 		}
 		// Step 2: Product type (live marketplace price suggestions)
 		if (cur < 2 || (cur == 2 && !currentCompleted)) {
 			totalIn += TYPE_PRICES_EST_INPUT_TOKENS;
 			totalOut += TYPE_PRICES_EST_OUTPUT_TOKENS;
+			if (included != null) {
+				included.add("type(" + TYPE_PRICES_EST_INPUT_TOKENS + "/" + TYPE_PRICES_EST_OUTPUT_TOKENS + ")");
+			}
 		}
 		// Step 3: Structure
 		if (cur < 3 || (cur == 3 && !currentCompleted)) {
 			totalIn += STRUCTURE_EST_INPUT_TOKENS;
 			totalOut += STRUCTURE_EST_OUTPUT_TOKENS;
+			if (included != null) {
+				included.add("structure(" + STRUCTURE_EST_INPUT_TOKENS + "/" + STRUCTURE_EST_OUTPUT_TOKENS + ")");
+			}
 		}
 		// Step 4: Manuscript
 		if (cur < 4) {
-			int expectedSections = sectionCount > 0 ? sectionCount : 9;
+			int expectedSections = sectionCount > 0
+					? sectionCount
+					: RelayProductType.targetSectionCount(product.getProductType());
 			totalIn += MANUSCRIPT_SECTION_EST_INPUT_TOKENS * expectedSections;
 			totalOut += MANUSCRIPT_SECTION_EST_OUTPUT_TOKENS * expectedSections;
+			if (included != null) {
+				included.add("manuscript(" + expectedSections + "x "
+						+ MANUSCRIPT_SECTION_EST_INPUT_TOKENS + "/" + MANUSCRIPT_SECTION_EST_OUTPUT_TOKENS + ")");
+			}
 		}
 		else if (cur == 4 && !currentCompleted) {
 			int remainingSections = Math.max(0, sectionCount - doneSectionCount);
 			totalIn += MANUSCRIPT_SECTION_EST_INPUT_TOKENS * remainingSections;
 			totalOut += MANUSCRIPT_SECTION_EST_OUTPUT_TOKENS * remainingSections;
+			if (included != null) {
+				included.add("manuscript(" + remainingSections + " remaining x "
+						+ MANUSCRIPT_SECTION_EST_INPUT_TOKENS + "/" + MANUSCRIPT_SECTION_EST_OUTPUT_TOKENS + ")");
+			}
 		}
 		// Step 5: Branding
 		if (cur < 5 || (cur == 5 && !currentCompleted)) {
 			totalIn += BRANDING_EST_INPUT_TOKENS;
 			totalOut += BRANDING_EST_OUTPUT_TOKENS;
+			if (included != null) {
+				included.add("branding(" + BRANDING_EST_INPUT_TOKENS + "/" + BRANDING_EST_OUTPUT_TOKENS + ")");
+			}
 		}
 		// Step 6: Ready ($0 AI)
+		if (included != null) {
+			included.add("ready($0)");
+		}
 
 		if (totalIn == 0 && totalOut == 0) {
+			RelayTrace.estimate("product={} cur={}({}) steps={} totalTokens=(0/0) totalUsd=$0.00",
+					product.getId(), cur, status, included);
 			return Optional.of(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
 		}
 
-		return estimateDefaultChatBudget(totalIn, totalOut);
+		Optional<BigDecimal> result = estimateDefaultChatBudget(totalIn, totalOut);
+		if (RelayTrace.isEstimateEnabled()) {
+			String rateStr = pricingCatalog.getRates(DEFAULT_CHAT_PROVIDER, DEFAULT_CHAT_MODEL)
+					.map(r -> "$" + r.inputPerMtok() + "/$" + r.outputPerMtok() + " per 1M")
+					.orElse("unavailable");
+			RelayTrace.estimate("product={} cur={}({}) steps={} totalTokens=({} in / {} out) rates=({}) totalUsd={}",
+					product.getId(), cur, status, included, totalIn, totalOut, rateStr,
+					result.map(v -> "$" + v).orElse("unavailable"));
+		}
+		return result;
 	}
 
 	private Optional<BigDecimal> estimateDefaultChatBudget(int inputTokens, int outputTokens) {

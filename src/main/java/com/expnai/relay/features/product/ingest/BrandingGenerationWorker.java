@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayBrand;
 import com.expnai.relay.domain.entity.RelayCitation;
@@ -64,8 +65,10 @@ public class BrandingGenerationWorker {
 	@Async("relayIngestionTaskExecutor")
 	public void generateBrandingAsync(Long productId, Long userId, String chatApiKey, String imageApiKey) {
 		AuditUserContext.setCurrentUserId(userId);
+		RelayTrace.step("start product={} step=5(Branding)", productId);
 		try {
 			runPipeline(productId, chatApiKey, imageApiKey);
+			RelayTrace.step("done product={} step=5(Branding)", productId);
 		}
 		catch (Exception ex) {
 			log.error("Branding generation failed for product {}: {}", productId, ex.getMessage(), ex);
@@ -156,9 +159,19 @@ public class BrandingGenerationWorker {
 			RelayBrand brand = new RelayBrand();
 			brand.setProduct(product);
 			brand.setTitle(generated.title());
-			brand.setPaletteIndex(generated.palette());
+			brand.setPaletteIndex(-1);
 			brand.setTypePair(generated.typePair());
-			brand.setCoverVariant(generated.cover());
+			brand.setCoverVariant(generated.preferredCover());
+			try {
+				brand.setPaletteJson(objectMapper.writeValueAsString(generated.palette()));
+			}
+			catch (Exception ignored) {
+			}
+			try {
+				brand.setCoverDirectionsJson(objectMapper.writeValueAsString(generated.coverDirections()));
+			}
+			catch (Exception ignored) {
+			}
 			if (anyCoverImage) {
 				try {
 					brand.setCoverImageKeysJson(objectMapper.writeValueAsString(coverImageKeys));
@@ -180,24 +193,32 @@ public class BrandingGenerationWorker {
 					? " (" + finalWarning + ")"
 					: "";
 			saveThreadMessage(product, RelayThreadWho.RELAY,
-					"Cover title, palette, and three cover designs are ready." + rationalePart + warningPart
-							+ " Pick your cover or tweak the title/palette, then click **Looks good, continue**.");
+					"Cover title, custom palette, and three cover designs are ready." + rationalePart + warningPart
+							+ " Pick your cover or tweak the title, then click **Looks good, continue**.");
 		});
 
 		publishTerminalProduct(productId);
 	}
 
 	private String buildCoverPrompt(BrandingContext ctx, GeneratedBrand generated, int variant) {
-		String paletteDesc = switch (generated.palette()) {
-			case 1 -> "Calm palette: soft off-white (#f7f6f2), deep navy (#1f2a44), sage teal (#3b7a6e), pale mist (#cfe0d8)";
-			case 2 -> "Bold palette: bright ivory (#fffdf5), deep ink (#14121c), golden sun yellow (#ffcf5a), soft cream (#ffe9b0)";
-			default -> "Editorial palette: warm paper cream (#f4f1ea), charcoal ink (#25262b), terracotta accent (#8a3b2e), sand (#dccdbf)";
-		};
-		String layoutMood = switch (variant) {
-			case 1 -> "Dark dramatic editorial cover: rich deep ink background, bold luminous centerpiece illustration or abstract graphic in the lower half, crisp light typography at the top.";
-			case 2 -> "Warm centered modern book cover: clean light background, centered title typography with a refined minimalist botanical/geometric motif inside a framed card.";
-			default -> "Classic high-craft editorial cover: clean light paper background, strong asymmetric typography at the top, rich accent color band and tasteful minimalist spot illustration in the lower half.";
-		};
+		BrandingLlmService.BrandPalette pal = generated.palette() != null
+				? generated.palette()
+				: BrandingLlmService.housePalette(0);
+		List<String> cols = pal.cols();
+		String paletteDesc = String.format(
+				"%s palette — page background %s, primary ink %s, accent %s, soft tint %s, muted ink %s; typography inspired by %s (display) and %s (body)",
+				pal.name(),
+				cols.get(0),
+				cols.get(1),
+				cols.get(2),
+				cols.get(3),
+				cols.get(4),
+				pal.display(),
+				pal.body());
+		List<String> dirs = generated.coverDirections();
+		String layoutMood = (dirs != null && variant >= 0 && variant < dirs.size() && dirs.get(variant) != null)
+				? dirs.get(variant)
+				: "Modern editorial digital product cover with strong typographic hierarchy and subject-specific minimalist illustration.";
 		String niche = ctx.pocket() != null && ctx.pocket().getNiche() != null
 				? ctx.pocket().getNiche()
 				: (ctx.profile() != null && ctx.profile().getNiche() != null ? ctx.profile().getNiche() : "practical digital guide");
@@ -212,8 +233,8 @@ public class BrandingGenerationWorker {
 				Design a polished, publish-ready 3:4 vertical digital %s cover.
 				Exact cover title text to render clearly and legibly on the cover: "%s"
 				Subject / niche: %s
-				Color palette: %s
-				Visual style & layout: %s%s
+				Color palette & typography: %s
+				Visual direction: %s%s
 				Rules:
 				- Render ONLY the exact title text cleanly with zero typos, no extra lorem ipsum, no watermarks, no 3D book mockups or hands holding a book (flat full-bleed front cover art only).
 				- High-contrast, modern, commercially sellable editorial design.

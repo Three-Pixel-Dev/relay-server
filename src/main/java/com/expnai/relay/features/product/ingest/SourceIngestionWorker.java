@@ -12,6 +12,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayPassage;
 import com.expnai.relay.domain.entity.RelayPocket;
@@ -81,8 +82,10 @@ public class SourceIngestionWorker {
 			String embedApiKey,
 			String chatApiKey) {
 		AuditUserContext.setCurrentUserId(userId);
+		RelayTrace.step("start product={} step=0(Sources) mode=ingestAndSummarize", productId);
 		try {
 			runPipeline(productId, userId, embedApiKey, chatApiKey);
+			RelayTrace.step("done product={} step=0(Sources) mode=ingestAndSummarize", productId);
 		}
 		catch (Exception ex) {
 			log.error("Unexpected failure in ingestion pipeline for product {}: {}", productId, ex.getMessage(), ex);
@@ -243,9 +246,14 @@ public class SourceIngestionWorker {
 			catch (Exception sourceEx) {
 				log.warn("Source {} ({}) failed during ingestion: {}",
 						source.getId(), source.getName(), sourceEx.getMessage());
-				markSourceFailed(source.getId(), productId, sourceEx.getMessage());
+				String friendlyErr = (source.getKind() == RelaySourceKind.WEB || source.getKind() == RelaySourceKind.YOUTUBE)
+						? "We couldn't read this link"
+						: (sourceEx.getMessage() != null && !sourceEx.getMessage().isBlank()
+								? sourceEx.getMessage()
+								: "We couldn't read this source");
+				markSourceFailed(source.getId(), productId, friendlyErr);
 				appendThreadMessage(productId, RelayThreadWho.RELAY,
-						"Could not read **" + source.getName() + "**: " + sourceEx.getMessage());
+						friendlyErr + " (**" + source.getName() + "**).");
 			}
 		}
 
@@ -272,8 +280,11 @@ public class SourceIngestionWorker {
 				publishTerminalProduct(productId);
 			}
 			else {
-				failStepGracefully(productId,
-						"No passages could be indexed from the sources. Check the error above, replace or remove the failed source, and press Proceed again.");
+				boolean anyLink = webCount > 0 || ytCount > 0;
+				String failMsg = anyLink
+						? "We couldn't read this link. Replace or remove it and press Proceed again."
+						: "No passages could be indexed from the sources. Replace or remove the failed source and press Proceed again.";
+				failStepGracefully(productId, failMsg);
 			}
 			return;
 		}
@@ -286,9 +297,9 @@ public class SourceIngestionWorker {
 		List<RelayPassage> indexedPassages = passageRepository.findByProductIdOrderByIdAsc(productId);
 		QualityCheckResult quality = sourceQualityService.evaluate(chatApiKey, snapshot, sources, indexedPassages);
 		if (quality.failsGate() && !snapshot.isQualityOverride()) {
-			String threadText = (quality.nonTeachable() && !quality.reasons().isEmpty())
-					? SourceQualityService.CLIENT_QUALITY_WARNING + " " + quality.reasons().get(0)
-					: SourceQualityService.CLIENT_QUALITY_WARNING;
+			String threadText = quality.nonTeachable()
+					? "Sources are not suitable for a paid digital product."
+					: "Sources look thin.";
 			transactionTemplate.executeWithoutResult(status -> {
 				RelayProduct product = productRepository.findById(productId).orElse(null);
 				if (product == null) {
@@ -339,6 +350,10 @@ public class SourceIngestionWorker {
 				25,
 				embedApiKey,
 				0);
+		if (topPassages == null || topPassages.isEmpty()) {
+			failStepGracefully(productId, "We couldn't read enough content from these sources to summarize them.");
+			return;
+		}
 
 		GeneratedSourceProfile generated = sourceSummaryLlmService.summarizePassages(
 				chatApiKey,
@@ -355,6 +370,8 @@ public class SourceIngestionWorker {
 		final int finalVideos = totalVideosRead;
 		final int finalDocs = totalDocsRead;
 		final int finalPassages = totalPassages;
+		final String sanitizedNiche = sanitizeNiche(generated.niche(), sources);
+		final boolean isViable = generated.viable() && !sanitizedNiche.isBlank();
 
 		transactionTemplate.executeWithoutResult(status -> {
 			RelayProduct product = productRepository.findById(productId).orElse(null);
@@ -364,7 +381,7 @@ public class SourceIngestionWorker {
 			sourceProfileRepository.deleteHardByProductId(productId);
 			RelaySourceProfile profile = new RelaySourceProfile();
 			profile.setProduct(product);
-			profile.setNiche(sanitizeNiche(generated.niche(), sources));
+			profile.setNiche(sanitizedNiche);
 			profile.setTransformation(generated.transformation());
 			try {
 				profile.setThemesJson(objectMapper.writeValueAsString(scoredThemes));
@@ -378,11 +395,25 @@ public class SourceIngestionWorker {
 			profile.setVideosCount(finalVideos);
 			profile.setDocsCount(finalDocs);
 			profile.setPassagesCount(finalPassages);
+			profile.setViable(isViable);
 			sourceProfileRepository.save(profile);
 
+			if (product.isAutoNamed() && !sanitizedNiche.isBlank()) {
+				String nextName = sanitizedNiche.length() > 120
+						? sanitizedNiche.substring(0, 120).trim()
+						: sanitizedNiche;
+				product.setName(nextName);
+				product.setAutoNamed(false);
+			}
+
 			product.setStepProgress(null);
-			product.setQualityWarning(null);
-			product.setQualityOverride(false);
+			if (!product.isQualityOverride()) {
+				product.setQualityWarning(null);
+			}
+			else if (product.getQualityWarning() == null || product.getQualityWarning().isBlank()) {
+				product.setQualityWarning("Built from thin sources (" + finalPassages
+						+ " passage" + (finalPassages == 1 ? "" : "s") + ")");
+			}
 			product.setStepStatus("review");
 			productRepository.save(product);
 

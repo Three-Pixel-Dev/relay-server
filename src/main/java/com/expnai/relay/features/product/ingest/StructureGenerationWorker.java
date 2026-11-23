@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayPocket;
 import com.expnai.relay.domain.entity.RelayProduct;
@@ -60,8 +61,10 @@ public class StructureGenerationWorker {
 	@Async("relayIngestionTaskExecutor")
 	public void generateStructureAsync(Long productId, Long userId, String embedApiKey, String chatApiKey) {
 		AuditUserContext.setCurrentUserId(userId);
+		RelayTrace.step("start product={} step=3(Structure)", productId);
 		try {
 			runPipeline(productId, embedApiKey, chatApiKey);
+			RelayTrace.step("done product={} step=3(Structure)", productId);
 		}
 		catch (Exception ex) {
 			log.error("Structure generation failed for product {}: {}", productId, ex.getMessage(), ex);

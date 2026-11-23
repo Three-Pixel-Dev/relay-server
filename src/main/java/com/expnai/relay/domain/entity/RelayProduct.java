@@ -40,6 +40,9 @@ public class RelayProduct extends MasterEntity {
 	@Column(name = "name", length = 255)
 	private String name;
 
+	@Column(name = "auto_named", nullable = false)
+	private boolean autoNamed = false;
+
 	@Column(name = "input", columnDefinition = "text")
 	private String input;
 

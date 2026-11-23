@@ -40,17 +40,6 @@ public class StructureLlmService {
 	private static final int MIN_SECTIONS = 3;
 	private static final int MAX_SECTIONS = 14;
 
-	private static final Map<RelayProductType, Integer> TARGET_SECTION_COUNTS = new EnumMap<>(RelayProductType.class);
-
-	static {
-		TARGET_SECTION_COUNTS.put(RelayProductType.EBOOK, 11);
-		TARGET_SECTION_COUNTS.put(RelayProductType.WORKBOOK, 9);
-		TARGET_SECTION_COUNTS.put(RelayProductType.PLANNER, 8);
-		TARGET_SECTION_COUNTS.put(RelayProductType.CHECKLIST, 4);
-		TARGET_SECTION_COUNTS.put(RelayProductType.TEMPLATES, 8);
-		TARGET_SECTION_COUNTS.put(RelayProductType.MINICOURSE, 7);
-	}
-
 	private final ObjectMapper objectMapper;
 	private final AiUsageMeter aiUsageMeter;
 
@@ -58,10 +47,7 @@ public class StructureLlmService {
 	}
 
 	public static int targetSectionCount(RelayProductType type) {
-		if (type == null) {
-			return 9;
-		}
-		return TARGET_SECTION_COUNTS.getOrDefault(type, 9);
+		return RelayProductType.targetSectionCount(type);
 	}
 
 	public List<GeneratedSection> generateStructure(

@@ -65,10 +65,10 @@ public class RelayAiCredentialService {
 		}
 		if (sawOpenAiKey) {
 			throw new BusinessRuleException(
-					"Image model requires a Google Gemini API key (starts with AIza…). Update your Image model key in Connections.");
+					"Image model requires a Google Gemini API key (starts with AIza… or AQ.…). Check your key in Connections.");
 		}
 		throw new BusinessRuleException(
-				"Connect your Google Gemini API key (under Image model in Connections) or set GEMINI_API_KEY before generating covers and page graphics.");
+				"Connect your Google Gemini API key (under Image model) before generating covers and page graphics. Check your key in Connections.");
 	}
 
 	public Optional<String> resolveOptionalImageModelKey(Long userId) {
@@ -106,10 +106,10 @@ public class RelayAiCredentialService {
 		}
 		if (sawOpenAiKey) {
 			throw new BusinessRuleException(
-					"Text model currently has an OpenAI (sk-…) key, but source indexing & summary require a Google Gemini API key (starts with AIza…). Update your Text model key in Connections.");
+					"Text model requires a Google Gemini API key (starts with AIza… or AQ.…), not an OpenAI sk-… key. Check your key in Connections.");
 		}
 		throw new BusinessRuleException(
-				"Connect your Google Gemini API key (under Text model in Connections) or set GEMINI_API_KEY before reading sources.");
+				"Connect your Google Gemini API key before continuing. Check your key in Connections.");
 	}
 
 	private String readStoredKey(RelayServiceConnection connection) {

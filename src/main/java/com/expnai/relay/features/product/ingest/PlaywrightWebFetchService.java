@@ -25,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.features.market.MarketResearchPack.GoogleSearchResult;
 import com.expnai.relay.features.market.MarketResearchPack.GoogleTrendsResult;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -293,6 +294,10 @@ public class PlaywrightWebFetchService {
 			if (html == null || html.isBlank()) {
 				throw new IllegalArgumentException("Rendered web page returned empty HTML for " + url);
 			}
+			RelayTrace.scrape("playwright webFetch url={} mode={} htmlChars={}",
+					RelayTrace.truncate(url, 120),
+					(wsEndpoint != null && !wsEndpoint.isBlank()) ? "ws" : "local",
+					html.length());
 			return html;
 		}
 		catch (IllegalArgumentException ex) {
@@ -372,6 +377,8 @@ public class PlaywrightWebFetchService {
 			}
 
 			String queriedAt = LocalDate.now(ZoneOffset.UTC).toString();
+			RelayTrace.scrape("playwright googleSearch keyword='{}' totalResults={} titles={} related={}",
+					keyword, totalResults, topTitles.size(), relatedQueries.size());
 			return new GoogleSearchResult(
 					keyword,
 					totalResults,
@@ -487,6 +494,8 @@ public class PlaywrightWebFetchService {
 					: "past 12 months";
 
 			String queriedAt = LocalDate.now(ZoneOffset.UTC).toString();
+			RelayTrace.scrape("playwright googleTrends keyword='{}' avg={} latest={} peak={} dir={} range='{}'",
+					keyword, avg, latest, peak, direction, dateRange);
 			return new GoogleTrendsResult(
 					keyword,
 					avg,

@@ -15,6 +15,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayBrand;
 import com.expnai.relay.domain.entity.RelayCitation;
@@ -36,6 +37,7 @@ import com.expnai.relay.domain.repository.RelaySectionRepository;
 import com.expnai.relay.domain.repository.RelaySourceProfileRepository;
 import com.expnai.relay.domain.repository.RelaySourceRepository;
 import com.expnai.relay.domain.repository.RelayThreadMessageRepository;
+import com.expnai.relay.features.ai.BrandingLlmService;
 import com.expnai.relay.features.ai.GeminiImageClient;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.mapper.RelayProductMapper;
@@ -73,8 +75,10 @@ public class ReadyExportWorker {
 	@Async("relayIngestionTaskExecutor")
 	public void exportAsync(Long productId, Long userId, String imageApiKey) {
 		AuditUserContext.setCurrentUserId(userId);
+		RelayTrace.step("start product={} step=6(ReadyExport)", productId);
 		try {
 			runPipeline(productId, imageApiKey);
+			RelayTrace.step("done product={} step=6(ReadyExport)", productId);
 		}
 		catch (Exception ex) {
 			log.error("Ready export failed for product {}: {}", productId, ex.getMessage(), ex);
@@ -144,7 +148,8 @@ public class ReadyExportWorker {
 		addProgress(productId, progressLines, "Rendering EPUB and DOCX");
 		byte[] epub = documentRenderer.renderEpub(
 				ctx.brand(), ctx.sections(), selectedCoverImage, sectionGraphics);
-		byte[] docx = documentRenderer.renderDocx(ctx.brand(), ctx.sections());
+		byte[] docx = documentRenderer.renderDocx(
+				ctx.brand(), ctx.sections(), selectedCoverImage, sectionGraphics);
 
 		if (isProductCancelled(productId)) {
 			return;
@@ -256,14 +261,7 @@ public class ReadyExportWorker {
 			addProgress(productId, progressLines, "Drawing section graphics");
 		}
 
-		int paletteIdx = (ctx.brand() != null && ctx.brand().getPaletteIndex() != null)
-				? ctx.brand().getPaletteIndex()
-				: 0;
-		String paletteHint = switch (paletteIdx) {
-			case 1 -> "Calm palette (soft off-white #f7f6f2, deep navy #1f2a44, sage teal #3b7a6e)";
-			case 2 -> "Bold palette (ivory #fffdf5, deep ink #14121c, golden sun yellow #ffcf5a)";
-			default -> "Editorial palette (warm cream #f4f1ea, charcoal #25262b, terracotta #8a3b2e)";
-		};
+		String paletteHint = buildPaletteHint(ctx.brand());
 
 		boolean updatedKeys = false;
 		long stamp = System.currentTimeMillis();
@@ -327,6 +325,29 @@ public class ReadyExportWorker {
 		}
 
 		return bytesBySection;
+	}
+
+	private String buildPaletteHint(RelayBrand brand) {
+		BrandingLlmService.BrandPalette pal = null;
+		if (brand != null && brand.getPaletteJson() != null && !brand.getPaletteJson().isBlank()) {
+			try {
+				BrandingLlmService.BrandPalette parsed = objectMapper.readValue(
+						brand.getPaletteJson(), BrandingLlmService.BrandPalette.class);
+				if (parsed != null && parsed.cols() != null && parsed.cols().size() >= 5) {
+					pal = parsed;
+				}
+			}
+			catch (Exception ignored) {
+			}
+		}
+		if (pal == null) {
+			pal = BrandingLlmService.housePalette(brand != null ? brand.getPaletteIndex() : 0);
+		}
+		List<String> cols = pal.cols();
+		return String.format(
+				"%s palette (page %s, ink %s, accent %s, tint %s, muted %s)",
+				pal.name() != null && !pal.name().isBlank() ? pal.name() : "Custom",
+				cols.get(0), cols.get(1), cols.get(2), cols.get(3), cols.get(4));
 	}
 
 	private byte[] readStoredBytesQuietly(String storageKey) {

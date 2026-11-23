@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.expnai.relay.common.logging.RelayTrace;
+
 /**
  * Converts uploaded audio/video files into 16 kHz mono WAV segments for Gemini transcription.
  * FFmpeg must be installed on the host ({@code RELAY_FFMPEG_PATH}).
@@ -82,8 +84,12 @@ public class FfmpegAudioService {
 
 		int window = Math.max(60, segmentSeconds);
 		boolean split = duration > window + 15;
+		RelayTrace.extract("ffmpeg start file={} durationSec={} mode={}",
+				input.getFileName(), String.format(Locale.ROOT, "%.1f", duration), split ? "segmented" : "single");
 		if (split) {
-			return transcodeSegmented(input, workDir, window);
+			List<Path> segs = transcodeSegmented(input, workDir, window);
+			RelayTrace.extract("ffmpeg done file={} segments={}", input.getFileName(), segs.size());
+			return segs;
 		}
 		Path wav = workDir.resolve("audio.wav");
 		run(List.of(
@@ -98,6 +104,7 @@ public class FfmpegAudioService {
 		if (!Files.isRegularFile(wav)) {
 			throw new IllegalArgumentException("FFmpeg did not write a WAV file for this audio source.");
 		}
+		RelayTrace.extract("ffmpeg done file={} segments=1", input.getFileName());
 		return List.of(wav);
 	}
 

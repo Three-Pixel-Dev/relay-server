@@ -32,6 +32,7 @@ import com.expnai.relay.domain.enums.RelayUserRole;
 import com.expnai.relay.domain.repository.RelayServiceConnectionRepository;
 import com.expnai.relay.domain.repository.RelaySubscriptionRepository;
 import com.expnai.relay.domain.repository.RelayUserRepository;
+import com.expnai.relay.features.ai.AiKeyValidationService;
 import com.expnai.relay.features.auth.security.RelayUserPrincipal;
 import com.expnai.relay.features.whop.service.RelayWhopService;
 
@@ -49,6 +50,7 @@ public class RelayWorkspaceController {
 	private final RelayServiceConnectionRepository serviceConnectionRepository;
 	private final CredentialEncryptionService credentialEncryptionService;
 	private final RelayWhopService whopService;
+	private final AiKeyValidationService aiKeyValidationService;
 
 	@GetMapping
 	@Transactional(readOnly = true)
@@ -110,14 +112,12 @@ public class RelayWorkspaceController {
 		if ("whop".equalsIgnoreCase(serviceId)) {
 			whopService.connect(conn, credential);
 		}
+		else if (isAiKeyService(serviceId)) {
+			aiKeyValidationService.validateKey(serviceId, credential);
+			conn.setEncryptedCredential(credentialEncryptionService.encrypt(credential.trim()));
+		}
 		else if (credential != null && !credential.isBlank()) {
-			String trimmed = credential.trim();
-			if (("llm".equalsIgnoreCase(serviceId) || "gemini".equalsIgnoreCase(serviceId))
-					&& trimmed.startsWith("sk-")) {
-				throw new BusinessRuleException(
-						"Text model requires a Google Gemini API key (starts with AIza…) for Gemini embeddings and source summary, not an OpenAI sk-… key.");
-			}
-			conn.setEncryptedCredential(credentialEncryptionService.encrypt(trimmed));
+			conn.setEncryptedCredential(credentialEncryptionService.encrypt(credential.trim()));
 		}
 		serviceConnectionRepository.save(conn);
 
@@ -140,6 +140,16 @@ public class RelayWorkspaceController {
 				});
 
 		return ApiResponse.ok("Service disconnected", buildWorkspaceMap(user));
+	}
+
+	private boolean isAiKeyService(String serviceId) {
+		if (serviceId == null) {
+			return false;
+		}
+		return switch (serviceId.trim().toLowerCase()) {
+			case "llm", "gemini", "google", "google-ai", "img", "image", "gemini-image" -> true;
+			default -> false;
+		};
 	}
 
 	private RelayUser requireCurrentUser() {

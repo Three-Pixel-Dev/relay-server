@@ -11,9 +11,12 @@ import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.features.product.dto.request.RelayAddSectionRequest;
 import com.expnai.relay.features.product.dto.request.RelayAddSourcesRequest;
 import com.expnai.relay.features.product.dto.request.RelayCreateProductRequest;
+import com.expnai.relay.features.product.dto.request.RelayRenameProductRequest;
 import com.expnai.relay.features.product.dto.request.RelaySuggestChangeRequest;
 import com.expnai.relay.features.product.dto.request.RelayUpdateBrandRequest;
+import com.expnai.relay.features.product.dto.response.RelayListingDraftResponse;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
+import com.expnai.relay.features.product.dto.response.RelayProductSelectionResponse;
 
 public interface RelayProductService {
 
@@ -22,6 +25,8 @@ public interface RelayProductService {
 	ApiResponse<RelayProductResponse> getProduct(Long productId);
 
 	ApiResponse<RelayProductResponse> createProduct(RelayCreateProductRequest request);
+
+	ApiResponse<RelayProductResponse> renameProduct(Long productId, RelayRenameProductRequest request);
 
 	ApiResponse<Void> deleteProduct(Long productId);
 
@@ -37,9 +42,9 @@ public interface RelayProductService {
 
 	ApiResponse<RelayProductResponse> approve(Long productId);
 
-	ApiResponse<RelayProductResponse> choosePocket(Long productId, Long pocketId);
+	ApiResponse<RelayProductSelectionResponse> choosePocket(Long productId, Long pocketId);
 
-	ApiResponse<RelayProductResponse> chooseType(Long productId, String typeId);
+	ApiResponse<RelayProductSelectionResponse> chooseType(Long productId, String typeId);
 
 	ApiResponse<RelayProductResponse> addSection(Long productId, RelayAddSectionRequest request);
 
@@ -48,6 +53,8 @@ public interface RelayProductService {
 	ApiResponse<RelayProductResponse> regenerateSection(Long productId, Long sectionId);
 
 	ApiResponse<RelayProductResponse> updateBrand(Long productId, RelayUpdateBrandRequest request);
+
+	ApiResponse<RelayListingDraftResponse> generateListingDraft(Long productId);
 
 	ApiResponse<RelayProductResponse> suggest(Long productId, RelaySuggestChangeRequest request);
 

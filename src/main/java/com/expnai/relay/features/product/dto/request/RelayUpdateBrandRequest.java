@@ -7,7 +7,6 @@ import lombok.Setter;
 @Setter
 public class RelayUpdateBrandRequest {
 	private String title;
-	private Integer palette;
 	private Integer cover;
 }
 

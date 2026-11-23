@@ -202,10 +202,10 @@ public class RelayWhopServiceImpl implements RelayWhopService {
 			row.setExternalCompanyId(connection.getExternalAccountId());
 			row = whopProductRepository.saveAndFlush(row);
 		}
-		BigDecimal affiliate = request.getAffiliatePercent();
-		if (affiliate != null) {
-			row.setAffiliateRate(affiliate);
-		}
+		BigDecimal affiliate = request.getAffiliatePercent() != null
+				? request.getAffiliatePercent()
+				: BigDecimal.valueOf(30);
+		row.setAffiliateRate(affiliate);
 		RelayPartnership partnership = partnershipRepository.findFirstByProductId(productId).orElse(null);
 		if (partnership != null) {
 			row.setPartnerShare(BigDecimal.valueOf(partnership.getSplitPercent()));

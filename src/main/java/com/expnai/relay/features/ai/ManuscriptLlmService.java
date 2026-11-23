@@ -85,7 +85,8 @@ public class ManuscriptLlmService {
 				2. Ground every concrete technique, story, or claim in the retrieved source passages when provided. Do NOT invent marketplace statistics, fake case studies, or bogus percentages.
 				3. Match the creator's voice and speak directly to the target audience facing this exact moment.
 				4. You may use compact GFM pipe tables (`| Column | Column |`) for side-by-side comparisons, frameworks, or checklists when helpful (keep tables compact: 2–4 columns, short cells).
-				5. Return clean Markdown prose only — NO Markdown image syntax (`![...](...)`), NO raw HTML tags, NO JSON wrapper, no preamble, and no meta-commentary about being an AI (visuals are generated separately as product branding assets).
+				5. Do NOT wrap worksheets, fill-in blanks, rate cards, tier ladders, or ASCII diagrams in fenced code blocks (```). Prefer bullet/numbered lists, compact GFM tables, or plain lines with `$______` blanks; reserve fenced code blocks for short literal code snippets only.
+				6. Return clean Markdown prose only — NO Markdown image syntax (`![...](...)`), NO raw HTML tags, NO JSON wrapper, no preamble, and no meta-commentary about being an AI (visuals are generated separately as product branding assets).
 				""".formatted(typeLabel, lengthGuidance));
 
 		if (product != null) {

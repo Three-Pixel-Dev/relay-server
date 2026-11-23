@@ -10,6 +10,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.domain.entity.RelayAiUsageEvent;
 import com.expnai.relay.domain.entity.RelayProduct;
 import com.expnai.relay.domain.repository.RelayAiUsageEventRepository;
@@ -163,6 +164,9 @@ public class AiUsageMeter {
 					productRepository.addSpend(productId, costUsd);
 				}
 			});
+			RelayTrace.ai("product={} step={} op={} provider={} model={} tokens=({} in / {} out) costUsd={}",
+					productId, buildStep, safeOp, safeProvider, safeModel, safeIn, safeOut,
+					costUsd != null ? "$" + costUsd : "unavailable");
 		}
 		catch (Exception ex) {
 			log.warn("Failed to record AI usage event for product {} (op={}, model={}): {}",

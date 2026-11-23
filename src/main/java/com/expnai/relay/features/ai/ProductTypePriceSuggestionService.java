@@ -44,23 +44,24 @@ public class ProductTypePriceSuggestionService {
 	private static final String OPENAI_MODEL = "gpt-4o-mini";
 
 	private static final List<FormatSpec> FORMATS = List.of(
-			new FormatSpec("ebook", "eBook / guide", 1.15),
-			new FormatSpec("workbook", "Workbook", 1.25),
-			new FormatSpec("planner", "Planner / tracker", 0.90),
-			new FormatSpec("checklist", "Checklist / cheat sheet", 0.55),
-			new FormatSpec("templates", "Template pack", 1.10),
-			new FormatSpec("minicourse", "Mini-course PDF", 1.75));
+			new FormatSpec("ebook", "eBook / guide", 1.15, 11, "pages"),
+			new FormatSpec("workbook", "Workbook", 1.25, 9, "pages"),
+			new FormatSpec("planner", "Planner / tracker", 0.90, 8, "pages"),
+			new FormatSpec("checklist", "Checklist / cheat sheet", 0.55, 4, "pages"),
+			new FormatSpec("templates", "Template pack", 1.10, 8, "templates"),
+			new FormatSpec("minicourse", "Mini-course PDF", 1.75, 7, "pages"));
 
 	private final MarketResearchService marketResearchService;
 	private final AiUsageMeter aiUsageMeter;
 	private final ObjectMapper objectMapper;
 
-	private record FormatSpec(String id, String label, double relativeMultiplier) {
+	private record FormatSpec(String id, String label, double relativeMultiplier, int sections, String unit) {
 	}
 
 	public record TypePriceSuggestion(
 			String price,
 			BigDecimal median,
+			String pages,
 			String rationale,
 			String source
 	) {
@@ -194,26 +195,27 @@ public class ProductTypePriceSuggestionService {
 		StringBuilder sb = new StringBuilder();
 		sb.append("""
 				You are a digital product pricing strategist.
-				Given the chosen pocket and REAL live marketplace listing prices for this niche below, suggest a realistic buyer sell price range (whole USD integers min and max) for ALL SIX digital product formats:
-				- ebook (eBook / guide)
-				- workbook (Workbook)
-				- planner (Planner / tracker)
-				- checklist (Checklist / cheat sheet)
-				- templates (Template pack)
-				- minicourse (Mini-course PDF)
+				Given the chosen pocket and REAL live marketplace listing prices for this niche below, suggest a realistic buyer sell price range (whole USD integers min and max) AND an estimated length string (`pages`) for ALL SIX digital product formats:
+				- ebook (eBook / guide, ~11 sections)
+				- workbook (Workbook, ~9 sections)
+				- planner (Planner / tracker, ~8 sections)
+				- checklist (Checklist / cheat sheet, ~4 sections)
+				- templates (Template pack, ~8 sections)
+				- minicourse (Mini-course PDF, ~7 sections)
 
 				RULES:
 				1. Return ONLY valid JSON mapping all six format ids to an object:
 				{
-				  "ebook": { "min": 9, "max": 22, "rationale": "One short phrase grounded in the observed niche median." },
-				  "workbook": { "min": 12, "max": 25, "rationale": "..." },
-				  "planner": { "min": 5, "max": 14, "rationale": "..." },
-				  "checklist": { "min": 3, "max": 9, "rationale": "..." },
-				  "templates": { "min": 9, "max": 21, "rationale": "..." },
-				  "minicourse": { "min": 17, "max": 39, "rationale": "..." }
+				  "ebook": { "min": 9, "max": 22, "pages": "Est. 45–95 pages", "rationale": "One short phrase grounded in the observed niche median." },
+				  "workbook": { "min": 12, "max": 25, "pages": "Est. 35–75 pages", "rationale": "..." },
+				  "planner": { "min": 5, "max": 14, "pages": "Est. 30–65 pages", "rationale": "..." },
+				  "checklist": { "min": 3, "max": 9, "pages": "Est. 4–8 pages", "rationale": "..." },
+				  "templates": { "min": 9, "max": 21, "pages": "Est. 10–24 templates", "rationale": "..." },
+				  "minicourse": { "min": 17, "max": 39, "pages": "Est. 28–60 pages", "rationale": "..." }
 				}
 				2. Anchor every format's [min, max] to the observed niche marketplace prices below (cheaper for checklists/planners, mid-band for guides/workbooks/templates, higher for mini-courses).
 				3. min and max must be positive whole integers with max >= min.
+				4. `pages` must ALWAYS start with "Est. " and reflect the niche + sample listing titles when they mention length, or the format's section count otherwise (use "templates" for templates, "pages" for all other formats).
 				""");
 
 		if (!topic.isBlank()) {
@@ -240,6 +242,9 @@ public class ProductTypePriceSuggestionService {
 			if (r.minPrice() != null && r.maxPrice() != null) {
 				sb.append(" (range $").append(r.minPrice().setScale(2, RoundingMode.HALF_UP))
 						.append("–$").append(r.maxPrice().setScale(2, RoundingMode.HALF_UP)).append(")");
+			}
+			if (r.sampleTitles() != null && !r.sampleTitles().isEmpty()) {
+				sb.append("; sample titles: ").append(String.join(" | ", r.sampleTitles()));
 			}
 			sb.append("\n");
 		}
@@ -271,10 +276,12 @@ public class ProductTypePriceSuggestionService {
 			min = Math.max(1, Math.min(299, min));
 			max = Math.max(min, Math.min(499, max));
 			String formatted = min == max ? ("$" + min) : ("$" + min + "–" + max);
+			String pages = normalizePagesEstimate(node.path("pages").asText(""), fmt);
 			String rationale = node.path("rationale").asText("").trim();
 			out.put(fmt.id(), new TypePriceSuggestion(
 					formatted,
 					anchorMedian,
+					pages,
 					rationale.isEmpty() ? null : rationale,
 					sourceLabel));
 		}
@@ -293,10 +300,33 @@ public class ProductTypePriceSuggestionService {
 			out.put(fmt.id(), new TypePriceSuggestion(
 					"$" + min + "–" + max,
 					anchorMedian,
+					estimatePagesFromSections(fmt),
 					"Anchored to live niche marketplace median ($" + anchorMedian + ")",
 					sourceLabel));
 		}
 		return out;
+	}
+
+	private String normalizePagesEstimate(String rawPages, FormatSpec fmt) {
+		String trimmed = rawPages == null ? "" : rawPages.replaceAll("\\s+", " ").trim();
+		if (trimmed.isEmpty() || trimmed.length() > 40) {
+			return estimatePagesFromSections(fmt);
+		}
+		if (!trimmed.regionMatches(true, 0, "Est.", 0, 4)) {
+			trimmed = "Est. " + trimmed;
+		}
+		return trimmed;
+	}
+
+	private String estimatePagesFromSections(FormatSpec fmt) {
+		int sections = Math.max(1, fmt.sections());
+		if ("templates".equals(fmt.id())) {
+			return "Est. " + sections + "–" + (sections * 3) + " " + fmt.unit();
+		}
+		if ("checklist".equals(fmt.id())) {
+			return "Est. " + sections + "–" + (sections * 2) + " " + fmt.unit();
+		}
+		return "Est. " + (sections * 4) + "–" + (sections * 9) + " " + fmt.unit();
 	}
 
 	private String callGemini(String apiKey, String prompt, Long productId) {

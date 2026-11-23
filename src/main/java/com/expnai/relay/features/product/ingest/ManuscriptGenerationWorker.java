@@ -14,6 +14,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayCitation;
 import com.expnai.relay.domain.entity.RelayPassage;
@@ -67,8 +68,10 @@ public class ManuscriptGenerationWorker {
 	@Async("relayIngestionTaskExecutor")
 	public void generateManuscriptAsync(Long productId, Long userId, String embedApiKey, String chatApiKey) {
 		AuditUserContext.setCurrentUserId(userId);
+		RelayTrace.step("start product={} step=4(Manuscript)", productId);
 		try {
 			runPipeline(productId, embedApiKey, chatApiKey);
+			RelayTrace.step("done product={} step=4(Manuscript)", productId);
 		}
 		catch (Exception ex) {
 			log.error("Manuscript generation failed for product {}: {}", productId, ex.getMessage(), ex);

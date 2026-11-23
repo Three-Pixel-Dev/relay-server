@@ -72,7 +72,8 @@ public record RelayProductResponse(
 			List<ThemeDto> themes,
 			String verdict,
 			String audience,
-			String voice
+			String voice,
+			boolean viable
 	) {
 	}
 
@@ -118,6 +119,7 @@ public record RelayProductResponse(
 	public record TypePriceSuggestionDto(
 			String price,
 			BigDecimal median,
+			String pages,
 			String rationale,
 			String source
 	) {
@@ -134,9 +136,18 @@ public record RelayProductResponse(
 	) {
 	}
 
+	public record BrandPaletteDto(
+			String name,
+			List<String> cols,
+			String display,
+			String body
+	) {
+	}
+
 	public record BrandDto(
 			String title,
 			int palette,
+			BrandPaletteDto paletteDetail,
 			int cover,
 			List<String> coverImageUrls,
 			Map<String, String> pageGraphicUrls

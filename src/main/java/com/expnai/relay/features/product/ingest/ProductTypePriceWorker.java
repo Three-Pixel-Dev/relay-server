@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.expnai.relay.common.logging.RelayTrace;
 import com.expnai.relay.common.persistence.AuditUserContext;
 import com.expnai.relay.domain.entity.RelayBrand;
 import com.expnai.relay.domain.entity.RelayCitation;
@@ -65,8 +66,10 @@ public class ProductTypePriceWorker {
 	@Async("relayIngestionTaskExecutor")
 	public void suggestPricesAsync(Long productId, Long userId, String chatApiKey) {
 		AuditUserContext.setCurrentUserId(userId);
+		RelayTrace.step("start product={} step=2(ProductTypePrices)", productId);
 		try {
 			runPipeline(productId, chatApiKey);
+			RelayTrace.step("done product={} step=2(ProductTypePrices)", productId);
 		}
 		catch (Exception ex) {
 			log.warn("Product type price suggestion failed for product {} (falling back to catalog prices): {}",

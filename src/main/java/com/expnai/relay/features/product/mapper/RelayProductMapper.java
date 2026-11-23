@@ -20,8 +20,10 @@ import com.expnai.relay.domain.entity.RelaySourceProfile;
 import com.expnai.relay.domain.entity.RelayThreadMessage;
 import com.expnai.relay.domain.enums.RelaySectionStatus;
 import com.expnai.relay.features.ai.AiPricingService;
+import com.expnai.relay.features.ai.BrandingLlmService;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.BrandDto;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.BrandPaletteDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.MetricsDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.PocketDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.PocketScoresDto;
@@ -280,7 +282,8 @@ public class RelayProductMapper {
 				themes,
 				profile.getVerdict() != null ? profile.getVerdict() : "",
 				profile.getAudience() != null ? profile.getAudience() : "",
-				profile.getVoice() != null ? profile.getVoice() : "");
+				profile.getVoice() != null ? profile.getVoice() : "",
+				profile.isViable());
 	}
 
 	private PocketDto toPocketDto(RelayPocket pocket) {
@@ -330,9 +333,8 @@ public class RelayProductMapper {
 	}
 
 	private BrandDto toBrandDto(RelayProduct product, RelayBrand brand) {
-		int palette = brand.getPaletteIndex() != null
-				? Math.max(0, Math.min(2, brand.getPaletteIndex()))
-				: 0;
+		int paletteIdx = brand.getPaletteIndex() != null ? brand.getPaletteIndex() : 0;
+		BrandPaletteDto paletteDetail = resolveBrandPalette(brand);
 		int cover = brand.getCoverVariant() != null
 				? Math.max(0, Math.min(2, brand.getCoverVariant()))
 				: 0;
@@ -375,10 +377,31 @@ public class RelayProductMapper {
 
 		return new BrandDto(
 				brand.getTitle() != null ? brand.getTitle() : "",
-				palette,
+				paletteIdx,
+				paletteDetail,
 				cover,
 				coverUrls,
 				pageGraphicUrls);
+	}
+
+	private BrandPaletteDto resolveBrandPalette(RelayBrand brand) {
+		if (brand.getPaletteJson() != null && !brand.getPaletteJson().isBlank()) {
+			try {
+				BrandingLlmService.BrandPalette custom = objectMapper.readValue(
+						brand.getPaletteJson(), BrandingLlmService.BrandPalette.class);
+				if (custom != null && custom.cols() != null && custom.cols().size() >= 5) {
+					return new BrandPaletteDto(
+							custom.name() != null && !custom.name().isBlank() ? custom.name() : "Custom",
+							custom.cols().subList(0, 5),
+							custom.display() != null && !custom.display().isBlank() ? custom.display() : "Merriweather",
+							custom.body() != null && !custom.body().isBlank() ? custom.body() : "Open Sans");
+				}
+			}
+			catch (Exception ignored) {
+			}
+		}
+		BrandingLlmService.BrandPalette house = BrandingLlmService.housePalette(brand.getPaletteIndex());
+		return new BrandPaletteDto(house.name(), house.cols(), house.display(), house.body());
 	}
 
 	private List<ProductStepDto> buildSteps(RelayProduct product) {

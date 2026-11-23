@@ -49,7 +49,8 @@ public class SourceSummaryLlmService {
 			List<ThemeItem> themes,
 			String verdict,
 			String audience,
-			String voice
+			String voice,
+			boolean viable
 	) {
 	}
 
@@ -106,12 +107,14 @@ public class SourceSummaryLlmService {
 				      "d": "1-2 sentences explaining the evidence and product fit"
 				    }
 				  ],
-				  "verdict": "One sentence naming the clearest paid digital product (guide, workbook, planner, or checklist) to build from these sources",
+				  "verdict": "One sentence naming the clearest paid digital product (guide, workbook, planner, or checklist) to build from these sources — or stating why no viable paid digital product can be built",
 				  "audience": "One concise sentence describing who this is for",
-				  "voice": "1-2 sentences describing the author/creator's tone, style, and how they teach"
+				  "voice": "1-2 sentences describing the author/creator's tone, style, and how they teach",
+				  "viable": true
 				}
-				3. Provide 3 distinct themes grounded in the retrieved passages. Evidence confidence levels will be computed separately from retrieval hit counts.
-				4. For "niche", always describe the teachable subject or topic — NEVER use the uploaded file's filename or a document type label (such as "Invoice", "Receipt", "Statement", or a file name) as the niche. If the sources do not contain a clear teachable topic, return "" for "niche".
+				3. Provide 3 distinct themes grounded ONLY in the retrieved passages below. Never invent a topic or method from a URL, filename, or product name alone.
+				4. For "niche", always describe the teachable subject or topic — NEVER use the uploaded file's filename or a document type label (such as "Invoice", "Receipt", "Statement", or a file name) as the niche.
+				5. Set "viable" to false (and "niche" to "") whenever the retrieved passages are empty/noise, entertainment-only, administrative/personal records, or otherwise cannot honestly support a paid digital product (guide/workbook/planner/checklist). Do NOT hallucinate a product.
 				""");
 		sb.append("\nTotal indexed passages across sources: ").append(Math.max(0, totalPassages)).append("\n");
 
@@ -229,7 +232,15 @@ public class SourceSummaryLlmService {
 						"Primary actionable framework found in the sources.",
 						null));
 			}
-			return new GeneratedSourceProfile(niche, transformation, themes, verdict, audience, voice);
+			boolean viable = node.has("viable") ? node.path("viable").asBoolean(true) : true;
+			String lowerVerdict = verdict.toLowerCase();
+			if (lowerVerdict.contains("no viable")
+					|| lowerVerdict.contains("not viable")
+					|| lowerVerdict.contains("cannot support a paid")
+					|| lowerVerdict.contains("cannot build a paid")) {
+				viable = false;
+			}
+			return new GeneratedSourceProfile(niche, transformation, themes, verdict, audience, voice, viable);
 		}
 		catch (Exception ex) {
 			throw new BusinessRuleException("Failed to parse LLM source profile JSON: " + ex.getMessage());

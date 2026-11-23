@@ -46,4 +46,12 @@ public class RelayBrand extends MasterEntity {
 	@JdbcTypeCode(SqlTypes.JSON)
 	@Column(name = "page_graphics_json", columnDefinition = "jsonb")
 	private String pageGraphicsJson;
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "palette_json", columnDefinition = "jsonb")
+	private String paletteJson;
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "cover_directions_json", columnDefinition = "jsonb")
+	private String coverDirectionsJson;
 }
