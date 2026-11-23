@@ -32,6 +32,12 @@ public class FfmpegAudioService {
 	public static final List<String> MEDIA_EXTENSIONS = List.of(
 			".mp3", ".mp4", ".wav", ".m4a", ".aac", ".mov", ".webm", ".ogg", ".flac", ".avi", ".mkv");
 
+	public static final List<String> VIDEO_EXTENSIONS = List.of(
+			".mp4", ".mov", ".webm", ".avi", ".mkv");
+
+	public record SampledFrame(Path path, double timeSeconds) {
+	}
+
 	@Value("${relay.ffmpeg.path:ffmpeg}")
 	private String ffmpegPath;
 
@@ -56,6 +62,19 @@ public class FfmpegAudioService {
 		}
 		String lower = name.toLowerCase(Locale.ROOT);
 		for (String ext : MEDIA_EXTENSIONS) {
+			if (lower.endsWith(ext)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public static boolean isVideoFilename(String name) {
+		if (name == null || name.isBlank()) {
+			return false;
+		}
+		String lower = name.toLowerCase(Locale.ROOT);
+		for (String ext : VIDEO_EXTENSIONS) {
 			if (lower.endsWith(ext)) {
 				return true;
 			}
@@ -106,6 +125,54 @@ public class FfmpegAudioService {
 		}
 		RelayTrace.extract("ffmpeg done file={} segments=1", input.getFileName());
 		return List.of(wav);
+	}
+
+	/**
+	 * Samples a JPEG every {@code intervalSeconds} (scaled to 640px wide) for scene selection.
+	 * Returns an empty list for audio-only files or if FFmpeg cannot decode video.
+	 */
+	public List<SampledFrame> extractSampledFrames(Path input, Path frameDir, int intervalSeconds) {
+		if (input == null || !Files.isRegularFile(input)) {
+			return List.of();
+		}
+		ensureFfmpegAvailable();
+		int interval = Math.max(2, intervalSeconds);
+		try {
+			Files.createDirectories(frameDir);
+		}
+		catch (IOException ex) {
+			throw new IllegalArgumentException("Could not create a temp folder for video frames.", ex);
+		}
+		Path pattern = frameDir.resolve("frame_%04d.jpg");
+		try {
+			run(List.of(
+					ffmpegBin(),
+					"-y",
+					"-i", input.toAbsolutePath().toString(),
+					"-vf", "fps=1/" + interval + ",scale=640:-2",
+					"-q:v", "6",
+					pattern.toAbsolutePath().toString()));
+		}
+		catch (IllegalArgumentException ex) {
+			log.warn("Could not sample video frames from {}: {}", input.getFileName(), ex.getMessage());
+			return List.of();
+		}
+		List<Path> files = new ArrayList<>();
+		try (Stream<Path> stream = Files.list(frameDir)) {
+			stream.filter(p -> {
+				String name = p.getFileName().toString().toLowerCase(Locale.ROOT);
+				return name.startsWith("frame_") && name.endsWith(".jpg");
+			}).sorted().forEach(files::add);
+		}
+		catch (IOException ex) {
+			log.warn("Could not list sampled frames: {}", ex.getMessage());
+			return List.of();
+		}
+		List<SampledFrame> frames = new ArrayList<>(files.size());
+		for (int i = 0; i < files.size(); i++) {
+			frames.add(new SampledFrame(files.get(i), i * (double) interval));
+		}
+		return frames;
 	}
 
 	public void deleteQuietly(Path workDir) {
@@ -197,6 +264,7 @@ public class FfmpegAudioService {
 		synchronized (this) {
 			if (resolvedFfmpeg == null) {
 				resolvedFfmpeg = locateTool("ffmpeg", ffmpegPath);
+				log.info("Using FFmpeg at {}", resolvedFfmpeg);
 			}
 			return resolvedFfmpeg;
 		}
@@ -261,19 +329,13 @@ public class FfmpegAudioService {
 		for (String name : names) {
 			candidates.addAll(pathEntries(name));
 			candidates.addAll(wellKnownBins(name));
+			candidates.addAll(winGetPackageBins(name));
 		}
 
-		String bareCommand = null;
 		for (Path candidate : candidates) {
 			if (isRunnableFile(candidate)) {
 				return candidate.toAbsolutePath().normalize().toString();
 			}
-			if (bareCommand == null && isBareCommand(candidate)) {
-				bareCommand = candidate.getFileName().toString();
-			}
-		}
-		if (bareCommand != null) {
-			return bareCommand;
 		}
 
 		throw new IllegalArgumentException(
@@ -323,6 +385,10 @@ public class FfmpegAudioService {
 				found.add(Path.of(home, "scoop", "shims", fileName));
 				found.add(Path.of(home, "AppData", "Local", "Microsoft", "WinGet", "Links", fileName));
 			}
+			String chocolatey = System.getenv("ChocolateyInstall");
+			if (chocolatey != null && !chocolatey.isBlank()) {
+				found.add(Path.of(chocolatey, "bin", fileName));
+			}
 		}
 		else {
 			found.add(Path.of("/usr/bin", fileName));
@@ -335,6 +401,37 @@ public class FfmpegAudioService {
 		return found;
 	}
 
+	private List<Path> winGetPackageBins(String fileName) {
+		List<Path> found = new ArrayList<>();
+		if (!isWindows() || fileName == null || fileName.isBlank()) {
+			return found;
+		}
+		String localAppData = System.getenv("LOCALAPPDATA");
+		if (localAppData == null || localAppData.isBlank()) {
+			return found;
+		}
+		Path packages = Path.of(localAppData, "Microsoft", "WinGet", "Packages");
+		if (!Files.isDirectory(packages)) {
+			return found;
+		}
+		try (Stream<Path> roots = Files.list(packages)) {
+			roots.filter(Files::isDirectory)
+					.filter(dir -> dir.getFileName().toString().toLowerCase(Locale.ROOT).contains("ffmpeg"))
+					.forEach(pkg -> {
+						try (Stream<Path> walk = Files.walk(pkg, 6)) {
+							walk.filter(p -> p.getFileName().toString().equalsIgnoreCase(fileName))
+									.filter(this::isRunnableFile)
+									.forEach(found::add);
+						}
+						catch (IOException ignored) {
+						}
+					});
+		}
+		catch (IOException ignored) {
+		}
+		return found;
+	}
+
 	private boolean isRunnableFile(Path candidate) {
 		try {
 			return candidate != null && Files.isRegularFile(candidate) && Files.isReadable(candidate);
@@ -342,15 +439,6 @@ public class FfmpegAudioService {
 		catch (Exception ex) {
 			return false;
 		}
-	}
-
-	private boolean isBareCommand(Path candidate) {
-		if (candidate == null || candidate.getNameCount() != 1) {
-			return false;
-		}
-		String name = candidate.getFileName().toString().toLowerCase(Locale.ROOT);
-		return name.equals("ffmpeg") || name.equals("ffmpeg.exe")
-				|| name.equals("ffprobe") || name.equals("ffprobe.exe");
 	}
 
 	private boolean isWindows() {
