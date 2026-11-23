@@ -23,7 +23,9 @@ class RelayCreatorScoutServiceTest {
 				fetcher,
 				new YoutubeCreatorParser(new ObjectMapper()),
 				new YahooSearchParser(),
+				new DuckDuckGoSearchParser(),
 				new InstagramProfileParser(),
+				new InstagramProfilePageParser(),
 				new CreatorSignalExtractor());
 	}
 
@@ -32,6 +34,12 @@ class RelayCreatorScoutServiceTest {
 			fetched.add(url);
 			if (url.contains("search.yahoo.com")) {
 				return YahooSearchParserTest.RESULTS_PAGE;
+			}
+			if (url.contains("duckduckgo.com")) {
+				return DuckDuckGoSearchParserTest.RESULTS_PAGE;
+			}
+			if (url.contains("instagram.com/leesdogtraining")) {
+				return InstagramProfilePageParserTest.PROFILE_PAGE;
 			}
 			if (url.contains("youtube.com/results")) {
 				return YoutubeCreatorParserTest.SEARCH_PAGE;
@@ -64,6 +72,60 @@ class RelayCreatorScoutServiceTest {
 	}
 
 	@Test
+	void enrichesInstagramFromTheProfilePageWhenTheSerpSnippetHasNoEmail() {
+		CreatorPageFetcher thinSnippet = url -> {
+			fetched.add(url);
+			if (url.contains("search.yahoo.com")) {
+				return """
+						<html><body><div id="web"><ol>
+						<li><div class="dd algo algo-sr"><div class="compTitle"><a href="https://www.instagram.com/leesdogtraining/">
+						<h3 class="title"><span>Lee’s dog training (@leesdogtraining)</span></h3></a></div>
+						<div class="compText"><p>56 Followers, 30 Following, 7 Posts</p></div></div></li>
+						</ol></div></body></html>
+						""";
+			}
+			if (url.contains("instagram.com/leesdogtraining")) {
+				return InstagramProfilePageParserTest.PROFILE_PAGE;
+			}
+			return "<html></html>";
+		};
+
+		List<RelayScoutResultResponse> results = service(thinSnippet)
+				.scout("dog training", List.of("instagram"), List.of());
+
+		assertEquals(1, results.size());
+		assertEquals("instagram.com/leesdogtraining", results.get(0).url());
+		assertEquals("leesdogtraining@aol.com", results.get(0).email());
+		assertTrue(fetched.stream().anyMatch(u -> u.contains("instagram.com/leesdogtraining")));
+	}
+
+	@Test
+	void fallsBackToDuckDuckGoWhenYahooReturnsNothingUseful() {
+		CreatorPageFetcher yahooDown = url -> {
+			fetched.add(url);
+			if (url.contains("search.yahoo.com")) {
+				return "<html><body>Unusual traffic</body></html>";
+			}
+			if (url.contains("duckduckgo.com")) {
+				return DuckDuckGoSearchParserTest.RESULTS_PAGE;
+			}
+			if (url.contains("instagram.com/leesdogtraining")) {
+				return InstagramProfilePageParserTest.PROFILE_PAGE;
+			}
+			return "<html></html>";
+		};
+
+		List<RelayScoutResultResponse> results = service(yahooDown)
+				.scout("dog training", List.of("instagram"), List.of());
+
+		assertEquals(1, results.size());
+		assertEquals("instagram.com/leesdogtraining", results.get(0).url());
+		assertEquals("leesdogtraining@aol.com", results.get(0).email());
+		assertTrue(fetched.stream().anyMatch(u -> u.contains("duckduckgo.com")));
+		assertTrue(fetched.stream().anyMatch(u -> u.contains("instagram.com/leesdogtraining")));
+	}
+
+	@Test
 	void dropsCreatorsWithoutAPublicEmail() {
 		CreatorPageFetcher noEmails = url -> {
 			if (url.contains("youtube.com/results")) {
@@ -89,7 +151,10 @@ class RelayCreatorScoutServiceTest {
 			if (url.contains("youtube.com")) {
 				throw new IllegalStateException("blocked");
 			}
-			return YahooSearchParserTest.RESULTS_PAGE;
+			if (url.contains("search.yahoo.com")) {
+				return YahooSearchParserTest.RESULTS_PAGE;
+			}
+			return "<html></html>";
 		};
 
 		List<RelayScoutResultResponse> results = service(youtubeDown)

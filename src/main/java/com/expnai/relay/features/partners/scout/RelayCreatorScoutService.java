@@ -28,8 +28,9 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * Finds creators with a public business email. YouTube is read from the JSON embedded in its search and
- * channel About pages; Instagram is read from the profile description that Yahoo shows in its results
- * (Instagram itself shows nothing to visitors who are not logged in). All pages load through Playwright.
+ * channel About pages. Instagram starts from search-engine profile hits (Yahoo, then DuckDuckGo), then
+ * enriches each handle by loading the public Instagram profile page through Playwright so bios and
+ * emails are not limited to thin SERP snippets. All pages load through Playwright.
  */
 @Service
 @RequiredArgsConstructor
@@ -41,20 +42,23 @@ public class RelayCreatorScoutService {
 	private static final String INSTAGRAM = "instagram";
 	private static final int YOUTUBE_ABOUT_LOOKUPS = 10;
 	private static final int INSTAGRAM_RESULT_PAGES = 2;
+	private static final int INSTAGRAM_PROFILE_LOOKUPS = 12;
 	private static final int SIGNAL_PREVIEW_CHARS = 120;
 	private static final int CACHE_LIMIT = 200;
 
 	private final CreatorPageFetcher pageFetcher;
 	private final YoutubeCreatorParser youtubeParser;
 	private final YahooSearchParser yahooParser;
+	private final DuckDuckGoSearchParser duckDuckGoParser;
 	private final InstagramProfileParser instagramParser;
+	private final InstagramProfilePageParser instagramPageParser;
 	private final CreatorSignalExtractor signals;
 
 	@Value("${relay.scout.max-results:6}")
 	private int maxResults = 6;
 
-	@Value("${relay.scout.time-budget-seconds:50}")
-	private int timeBudgetSeconds = 50;
+	@Value("${relay.scout.time-budget-seconds:70}")
+	private int timeBudgetSeconds = 70;
 
 	@Value("${relay.scout.cache-minutes:60}")
 	private int cacheMinutes = 60;
@@ -112,49 +116,168 @@ public class RelayCreatorScoutService {
 	}
 
 	private List<Found> searchInstagram(String niche, String displayNiche, Set<String> skip, int cap, Instant deadline) {
-		String query = "site:instagram.com \"" + niche + "\" email";
+		List<WebSearchHit> hits = collectInstagramHits(niche, deadline);
+		if (hits.isEmpty()) {
+			throw new IllegalStateException("No Instagram profile links came back from search");
+		}
+
 		Map<String, Found> found = new LinkedHashMap<>();
-		for (int page = 0; page < INSTAGRAM_RESULT_PAGES && found.size() < cap && Instant.now().isBefore(deadline); page++) {
-			String url = "https://search.yahoo.com/search?ei=UTF-8&p=" + encode(query)
-					+ (page == 0 ? "" : "&b=" + (page * 10 + 1));
-			String html = pageFetcher.fetch(url);
-			if (!yahooParser.looksLikeResultsPage(html)) {
-				throw new IllegalStateException("The search engine did not return a results page");
+		int profileLookups = 0;
+		for (WebSearchHit hit : hits) {
+			if (found.size() >= cap || !Instant.now().isBefore(deadline)) {
+				break;
 			}
-			for (WebSearchHit hit : yahooParser.parse(html)) {
-				if (found.size() >= cap) {
-					break;
-				}
-				Optional<InstagramProfile> profile = instagramParser.parse(hit);
-				if (profile.isEmpty() || skip.contains(profile.get().handle().toLowerCase(Locale.ROOT))) {
-					continue;
-				}
-				toInstagramResult(profile.get(), displayNiche)
-						.ifPresent(result -> found.putIfAbsent(result.response().handle(), result));
+			Optional<InstagramProfile> fromSerp = instagramParser.parse(hit);
+			if (fromSerp.isEmpty()) {
+				continue;
 			}
+			InstagramProfile profile = fromSerp.get();
+			if (skip.contains(profile.handle().toLowerCase(Locale.ROOT))) {
+				continue;
+			}
+			if (found.containsKey(profile.handle())) {
+				continue;
+			}
+
+			Optional<String> email = signals.findEmail(profile.bio());
+			boolean needsPage = email.isEmpty() || profile.bio().isBlank() || profile.followers().isBlank();
+			if (needsPage && profileLookups < INSTAGRAM_PROFILE_LOOKUPS && Instant.now().isBefore(deadline)) {
+				profileLookups++;
+				profile = enrichFromInstagramPage(profile);
+				email = signals.findEmail(profile.bio());
+			}
+			if (email.isEmpty()) {
+				continue;
+			}
+			toInstagramResult(profile, displayNiche, email.get())
+					.ifPresent(result -> found.putIfAbsent(result.response().handle(), result));
 		}
 		return List.copyOf(found.values());
 	}
 
-	private Optional<Found> toInstagramResult(InstagramProfile profile, String niche) {
-		Optional<String> email = signals.findEmail(profile.bio());
-		if (email.isEmpty()) {
-			return Optional.empty();
+	private List<WebSearchHit> collectInstagramHits(String niche, Instant deadline) {
+		Map<String, WebSearchHit> unique = new LinkedHashMap<>();
+		for (String query : instagramSearchQueries(niche)) {
+			if (!Instant.now().isBefore(deadline)) {
+				break;
+			}
+			for (WebSearchHit hit : searchYahoo(query, deadline)) {
+				unique.putIfAbsent(hit.url(), hit);
+			}
+			if (unique.size() >= capForSearch()) {
+				break;
+			}
 		}
+		if (unique.size() < Math.max(3, maxResults)) {
+			for (String query : instagramSearchQueries(niche)) {
+				if (!Instant.now().isBefore(deadline)) {
+					break;
+				}
+				for (WebSearchHit hit : searchDuckDuckGo(query, deadline)) {
+					unique.putIfAbsent(hit.url(), hit);
+				}
+				if (unique.size() >= capForSearch()) {
+					break;
+				}
+			}
+		}
+		return List.copyOf(unique.values());
+	}
+
+	private int capForSearch() {
+		return Math.max(maxResults * 3, 12);
+	}
+
+	private static List<String> instagramSearchQueries(String niche) {
+		return List.of(
+				"site:instagram.com \"" + niche + "\" email",
+				"site:instagram.com \"" + niche + "\" contact OR gmail OR @",
+				"site:instagram.com/ \"" + niche + "\" \"Followers\"");
+	}
+
+	private List<WebSearchHit> searchYahoo(String query, Instant deadline) {
+		List<WebSearchHit> hits = new ArrayList<>();
+		for (int page = 0; page < INSTAGRAM_RESULT_PAGES && Instant.now().isBefore(deadline); page++) {
+			String url = "https://search.yahoo.com/search?ei=UTF-8&p=" + encode(query)
+					+ (page == 0 ? "" : "&b=" + (page * 10 + 1));
+			try {
+				String html = pageFetcher.fetch(url);
+				if (!yahooParser.looksLikeResultsPage(html)) {
+					log.debug("Yahoo did not return a results page for Instagram query");
+					break;
+				}
+				hits.addAll(yahooParser.parse(html));
+			}
+			catch (RuntimeException ex) {
+				log.debug("Yahoo Instagram search failed: {}", ex.getMessage());
+				break;
+			}
+		}
+		return hits;
+	}
+
+	private List<WebSearchHit> searchDuckDuckGo(String query, Instant deadline) {
+		if (!Instant.now().isBefore(deadline)) {
+			return List.of();
+		}
+		String url = "https://html.duckduckgo.com/html/?q=" + encode(query);
+		try {
+			String html = pageFetcher.fetch(url);
+			if (!duckDuckGoParser.looksLikeResultsPage(html)) {
+				log.debug("DuckDuckGo did not return a results page for Instagram query");
+				return List.of();
+			}
+			return duckDuckGoParser.parse(html);
+		}
+		catch (RuntimeException ex) {
+			log.debug("DuckDuckGo Instagram search failed: {}", ex.getMessage());
+			return List.of();
+		}
+	}
+
+	private InstagramProfile enrichFromInstagramPage(InstagramProfile seed) {
+		String handle = seed.handle().replace("@", "");
+		String url = "https://www.instagram.com/" + handle + "/";
+		try {
+			String html = pageFetcher.fetch(url);
+			Optional<InstagramProfile> page = instagramPageParser.parse(html, handle);
+			if (page.isEmpty()) {
+				return seed;
+			}
+			InstagramProfile fetched = page.get();
+			String bio = !fetched.bio().isBlank() ? fetched.bio() : seed.bio();
+			String followers = !fetched.followers().isBlank() ? fetched.followers() : seed.followers();
+			String name = !fetched.name().isBlank() && !fetched.name().equalsIgnoreCase(handle)
+					? fetched.name()
+					: seed.name();
+			return new InstagramProfile(seed.handle(), name, followers, bio);
+		}
+		catch (RuntimeException ex) {
+			log.debug("Instagram profile page enrich failed for {}: {}", handle, ex.getMessage());
+			return seed;
+		}
+	}
+
+	private Optional<Found> toInstagramResult(InstagramProfile profile, String niche, String email) {
 		Optional<String> listSignal = signals.listSignal("Bio", profile.bio());
 		String signal = listSignal.orElseGet(() -> preview("Bio", profile.bio()));
 		RelayScoutResultResponse response = new RelayScoutResultResponse(
 				profile.name(),
 				profile.handle(),
 				INSTAGRAM,
-				"instagram.com/" + profile.handle().substring(1),
+				instagramSourceUrl(profile.handle()),
 				profile.followers().isEmpty() ? "n/a" : profile.followers(),
 				niche,
 				signal,
 				signals.listSize(profile.bio()),
 				signals.productNote(profile.bio()),
-				email.get());
+				email);
 		return Optional.of(new Found(response, listSignal.isPresent()));
+	}
+
+	private static String instagramSourceUrl(String handle) {
+		String clean = handle == null ? "" : handle.trim().replace("@", "");
+		return "instagram.com/" + clean;
 	}
 
 	private List<Found> searchYoutube(String niche, String displayNiche, Set<String> skip, int cap, Instant deadline) {
