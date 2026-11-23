@@ -42,6 +42,7 @@ import org.springframework.stereotype.Service;
 
 import com.expnai.relay.domain.entity.RelaySource;
 import com.expnai.relay.domain.enums.RelaySourceKind;
+import com.expnai.relay.features.ai.GeminiAudioTranscribeClient;
 import com.expnai.relay.features.ai.GeminiPdfOcrClient;
 import com.expnai.relay.features.ai.GeminiUrlContextFetchService;
 import com.expnai.relay.features.product.storage.FileStorageService;
@@ -63,9 +64,6 @@ public class SourceParserService {
 	private static final float PDF_OCR_DPI = 150f;
 	private static final int PDF_OCR_MAX_PAGES = 40;
 
-	private static final List<String> MEDIA_EXTENSIONS = List.of(
-			".mp3", ".mp4", ".wav", ".m4a", ".mov", ".webm", ".ogg", ".flac", ".avi", ".mkv");
-
 	private static final Pattern SRT_TIME_PATTERN = Pattern.compile(
 			"(\\d{2}):(\\d{2}):(\\d{2})[,.]\\d{3}\\s*-->\\s*\\d{2}:\\d{2}:\\d{2}[,.]\\d{3}");
 	private static final Pattern YT_VIDEO_ID_PATTERN = Pattern.compile(
@@ -79,6 +77,8 @@ public class SourceParserService {
 	private final PlaywrightWebFetchService playwrightWebFetchService;
 	private final GeminiUrlContextFetchService geminiUrlContextFetchService;
 	private final GeminiPdfOcrClient geminiPdfOcrClient;
+	private final GeminiAudioTranscribeClient geminiAudioTranscribeClient;
+	private final FfmpegAudioService ffmpegAudioService;
 	private final ObjectMapper objectMapper;
 
 	@Value("${youtube.api.key:}")
@@ -128,16 +128,14 @@ public class SourceParserService {
 			Long productId) {
 		String name = source.getName() != null ? source.getName() : "document.txt";
 		String lower = name.toLowerCase(Locale.ROOT);
-		for (String ext : MEDIA_EXTENSIONS) {
-			if (lower.endsWith(ext)) {
-				throw new IllegalArgumentException(
-						"Audio/video transcription (STT) is not enabled in Phase 1. Please upload a document or transcript (.pdf, .docx, .txt, .md, .csv, .srt).");
-			}
-		}
 
 		Path path = fileStorageService.resolvePath(source.getStorageKey());
 		if (!Files.exists(path)) {
 			throw new IllegalArgumentException("Stored file not found for " + name);
+		}
+
+		if (FfmpegAudioService.isMediaFilename(name)) {
+			return parseMediaSource(path, name, chatApiKey, progressCallback, productId);
 		}
 
 		try {
@@ -163,6 +161,59 @@ public class SourceParserService {
 		}
 		catch (Exception ex) {
 			throw new IllegalArgumentException("Failed to read file " + name + ": " + ex.getMessage(), ex);
+		}
+	}
+
+	private ParseResult parseMediaSource(
+			Path path,
+			String sourceName,
+			String chatApiKey,
+			Consumer<String> progressCallback,
+			Long productId) {
+		if (progressCallback != null) {
+			progressCallback.accept("Transcribing audio from " + sourceName);
+		}
+		Path workDir = path.getParent().resolve("ffmpeg-" + System.nanoTime());
+		try {
+			List<Path> wavs = ffmpegAudioService.transcodeForTranscription(path, workDir);
+			StringBuilder transcript = new StringBuilder();
+			int segmentIndex = 0;
+			for (Path wav : wavs) {
+				segmentIndex++;
+				if (progressCallback != null && wavs.size() > 1) {
+					progressCallback.accept(
+							"Transcribing audio from " + sourceName + " (" + segmentIndex + "/" + wavs.size() + ")");
+				}
+				byte[] wavBytes = Files.readAllBytes(wav);
+				String part = geminiAudioTranscribeClient.transcribeWav(
+						chatApiKey, wavBytes, productId, sourceName);
+				if (part != null && !part.isBlank()) {
+					if (!transcript.isEmpty()) {
+						transcript.append("\n\n");
+					}
+					transcript.append(part.strip());
+				}
+			}
+			String combined = transcript.toString().strip();
+			if (combined.length() < 40) {
+				throw new IllegalArgumentException(
+						"No speech could be transcribed from " + sourceName + ". Try a clearer recording.");
+			}
+			List<String> windows = splitTextIntoWindows(combined);
+			List<PassageChunk> chunks = new ArrayList<>(windows.size());
+			for (int i = 0; i < windows.size(); i++) {
+				chunks.add(new PassageChunk(windows.get(i), sourceName + ", audio " + (i + 1)));
+			}
+			return new ParseResult(chunks, 0, 1);
+		}
+		catch (IllegalArgumentException ex) {
+			throw ex;
+		}
+		catch (Exception ex) {
+			throw new IllegalArgumentException("Failed to transcribe " + sourceName + ": " + ex.getMessage(), ex);
+		}
+		finally {
+			ffmpegAudioService.deleteQuietly(workDir);
 		}
 	}
 
