@@ -75,6 +75,7 @@ public class SourceParserService {
 
 	private final FileStorageService fileStorageService;
 	private final PlaywrightWebFetchService playwrightWebFetchService;
+	private final InstagramSourceReader instagramSourceReader;
 	private final GeminiUrlContextFetchService geminiUrlContextFetchService;
 	private final GeminiPdfOcrClient geminiPdfOcrClient;
 	private final GeminiAudioTranscribeClient geminiAudioTranscribeClient;
@@ -117,6 +118,10 @@ public class SourceParserService {
 		}
 		if (kind == RelaySourceKind.YOUTUBE) {
 			return parseYoutubeSource(source);
+		}
+		if (kind == RelaySourceKind.INSTAGRAM) {
+			String target = source.getUrl() != null && !source.getUrl().isBlank() ? source.getUrl() : source.getName();
+			return new ParseResult(instagramSourceReader.read(target, progressCallback), 0, 1);
 		}
 		return new ParseResult(List.of(), 0, 0);
 	}

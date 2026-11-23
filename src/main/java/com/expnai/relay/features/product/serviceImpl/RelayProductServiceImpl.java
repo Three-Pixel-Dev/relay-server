@@ -372,18 +372,8 @@ public class RelayProductServiceImpl implements RelayProductService {
 			}
 
 			if (!sources.isEmpty()) {
-				boolean hasReadableSources = sources.stream()
-						.anyMatch(s -> s.getKind() != RelaySourceKind.INSTAGRAM);
-				final String embedKey;
-				final String chatKey;
-				if (hasReadableSources) {
-					embedKey = aiCredentialService.requireGeminiEmbeddingKey(user.getId());
-					chatKey = aiCredentialService.requireChatModelKey(user.getId());
-				}
-				else {
-					embedKey = "";
-					chatKey = "";
-				}
+				final String embedKey = aiCredentialService.requireGeminiEmbeddingKey(user.getId());
+				final String chatKey = aiCredentialService.requireChatModelKey(user.getId());
 
 				product.setCancelled(false);
 				product.setStepStatus("running");
@@ -1299,13 +1289,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 		source.setName(name);
 		source.setUrl(url);
 		source.setFileSize(dto.getSize());
-		if (kind == RelaySourceKind.INSTAGRAM) {
-			source.setStatus(RelaySourceStatus.SKIPPED);
-			source.setErrorMessage("Instagram reading requires creator OAuth approval (out of scope for Phase 1).");
-		}
-		else {
-			source.setStatus(RelaySourceStatus.PENDING);
-		}
+		source.setStatus(RelaySourceStatus.PENDING);
 
 		if (kind == RelaySourceKind.FILE) {
 			String key = fileStorageService.storeSampleDocument(product.getId(), name, product.getInput());
