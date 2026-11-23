@@ -2,7 +2,10 @@ package com.expnai.relay.features.gmail.controller;
 
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,6 +32,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 @Tag(name = "Gmail")
 public class RelayGmailController {
+
+	private static final Logger log = LoggerFactory.getLogger(RelayGmailController.class);
 
 	private final RelayGmailMailboxService mailboxService;
 	private final RelayGmailMailboxServiceImpl mailboxServiceImpl;
@@ -57,10 +62,27 @@ public class RelayGmailController {
 	@GetMapping("/oauth/callback")
 	@Operation(summary = "OAuth redirect callback — exchanges code and stores encrypted refresh token")
 	public RedirectView callback(
-			@RequestParam("code") String code,
-			@RequestParam("state") String state) {
-		String redirect = mailboxServiceImpl.completeConnectRedirect(code, state, frontendRedirectBase);
-		return new RedirectView(redirect);
+			@RequestParam(value = "code", required = false) String code,
+			@RequestParam(value = "state", required = false) String state,
+			@RequestParam(value = "error", required = false) String error) {
+		if (code == null || state == null || error != null) {
+			return new RedirectView(failureRedirect());
+		}
+		try {
+			return new RedirectView(mailboxServiceImpl.completeConnectRedirect(code, state, frontendRedirectBase));
+		}
+		catch (RuntimeException ex) {
+			log.warn("Gmail OAuth callback failed: {}", ex.getClass().getSimpleName());
+			return new RedirectView(failureRedirect());
+		}
+	}
+
+	private String failureRedirect() {
+		return UriComponentsBuilder.fromUriString(frontendRedirectBase)
+				.path("/connections")
+				.queryParam("gmail", "error")
+				.build()
+				.toUriString();
 	}
 
 	@PostMapping("/oauth/complete")
