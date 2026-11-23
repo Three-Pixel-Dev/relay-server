@@ -82,6 +82,7 @@ import com.expnai.relay.features.product.mapper.RelayProductMapper;
 import com.expnai.relay.features.product.service.RelayProductService;
 import com.expnai.relay.features.product.sse.ProductSseHub;
 import com.expnai.relay.features.product.storage.FileStorageService;
+import com.expnai.relay.features.whop.service.RelayWhopCommerceReader;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -116,6 +117,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	private final RelayUserRepository userRepository;
 	private final RelayProductMapper productMapper;
 	private final FileStorageService fileStorageService;
+	private final RelayWhopCommerceReader whopCommerceReader;
 	private final RelayAiCredentialService aiCredentialService;
 	private final AiPricingService aiPricingService;
 	private final SourceIngestionWorker sourceIngestionWorker;
@@ -1364,7 +1366,9 @@ public class RelayProductServiceImpl implements RelayProductService {
 		List<RelayProductFile> files = productFileRepository.findByProductIdOrderByIdAsc(product.getId());
 		List<RelayThreadMessage> messages = threadMessageRepository
 				.findByProductIdOrderByCreatedAtAscIdAsc(product.getId());
-		return productMapper.toDto(product, sources, profile, pockets, sections, citations, brand, files, messages);
+		return whopCommerceReader.enrich(
+				productMapper.toDto(product, sources, profile, pockets, sections, citations, brand, files, messages),
+				product.getId());
 	}
 
 	private void saveThreadMessage(RelayProduct product, RelayThreadWho who, String text) {

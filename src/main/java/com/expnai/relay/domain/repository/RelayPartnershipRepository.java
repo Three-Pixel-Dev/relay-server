@@ -14,6 +14,8 @@ public interface RelayPartnershipRepository extends BaseRepository<RelayPartners
 
 	Optional<RelayPartnership> findByProspectId(Long prospectId);
 
+	Optional<RelayPartnership> findFirstByProductId(Long productId);
+
 	List<RelayPartnership> findByProspectIdIn(Collection<Long> prospectIds);
 
 	List<RelayPartnership> findByUserIdOrderByCreatedAtDesc(Long userId);
