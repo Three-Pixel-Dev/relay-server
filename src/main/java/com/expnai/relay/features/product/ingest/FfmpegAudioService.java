@@ -45,6 +45,9 @@ public class FfmpegAudioService {
 	@Value("${relay.ffmpeg.segment-seconds:480}")
 	private int segmentSeconds;
 
+	private volatile String resolvedFfmpeg;
+	private volatile String resolvedFfprobe;
+
 	public static boolean isMediaFilename(String name) {
 		if (name == null || name.isBlank()) {
 			return false;
@@ -84,7 +87,7 @@ public class FfmpegAudioService {
 		}
 		Path wav = workDir.resolve("audio.wav");
 		run(List.of(
-				ffmpegPath,
+				ffmpegBin(),
 				"-y",
 				"-i", input.toAbsolutePath().toString(),
 				"-vn",
@@ -119,7 +122,7 @@ public class FfmpegAudioService {
 	private List<Path> transcodeSegmented(Path input, Path workDir, int windowSeconds) {
 		Path pattern = workDir.resolve("seg_%03d.wav");
 		run(List.of(
-				ffmpegPath,
+				ffmpegBin(),
 				"-y",
 				"-i", input.toAbsolutePath().toString(),
 				"-vn",
@@ -169,28 +172,198 @@ public class FfmpegAudioService {
 
 	private void ensureFfmpegAvailable() {
 		try {
-			run(List.of(ffmpegPath, "-version"));
+			run(List.of(ffmpegBin(), "-version"));
 		}
 		catch (IllegalArgumentException ex) {
 			throw new IllegalArgumentException(
 					"Audio sources need FFmpeg on the server. Install FFmpeg and add it to PATH, "
-							+ "or set RELAY_FFMPEG_PATH to the ffmpeg executable. "
+							+ "or set RELAY_FFMPEG_PATH to the ffmpeg executable (ffmpeg on Linux, ffmpeg.exe on Windows). "
 							+ ex.getMessage());
 		}
 	}
 
+	private String ffmpegBin() {
+		String cached = resolvedFfmpeg;
+		if (cached != null) {
+			return cached;
+		}
+		synchronized (this) {
+			if (resolvedFfmpeg == null) {
+				resolvedFfmpeg = locateTool("ffmpeg", ffmpegPath);
+			}
+			return resolvedFfmpeg;
+		}
+	}
+
 	private String resolveFfprobePath() {
-		if (ffprobePath != null && !ffprobePath.isBlank()) {
-			return ffprobePath.trim();
+		String cached = resolvedFfprobe;
+		if (cached != null) {
+			return cached;
 		}
-		String path = ffmpegPath != null ? ffmpegPath.trim() : "ffmpeg";
-		if (path.toLowerCase(Locale.ROOT).endsWith("ffmpeg.exe")) {
-			return path.substring(0, path.length() - "ffmpeg.exe".length()) + "ffprobe.exe";
+		synchronized (this) {
+			if (resolvedFfprobe == null) {
+				String configured = stripQuotes(ffprobePath);
+				if (configured.isEmpty()) {
+					Path ffmpegParent = Path.of(ffmpegBin()).toAbsolutePath().getParent();
+					if (ffmpegParent != null) {
+						for (String name : executableNames("ffprobe")) {
+							Path sibling = ffmpegParent.resolve(name);
+							if (isRunnableFile(sibling)) {
+								resolvedFfprobe = sibling.toAbsolutePath().normalize().toString();
+								return resolvedFfprobe;
+							}
+						}
+					}
+				}
+				resolvedFfprobe = locateTool("ffprobe", ffprobePath);
+			}
+			return resolvedFfprobe;
 		}
-		if (path.toLowerCase(Locale.ROOT).endsWith("ffmpeg")) {
-			return path.substring(0, path.length() - "ffmpeg".length()) + "ffprobe";
+	}
+
+	private String locateTool(String toolName, String configured) {
+		String trimmed = stripQuotes(configured);
+		List<String> names = executableNames(toolName);
+		List<Path> candidates = new ArrayList<>();
+
+		if (!trimmed.isEmpty()) {
+			Path configuredPath = Path.of(trimmed);
+			if (Files.isRegularFile(configuredPath)) {
+				return configuredPath.toAbsolutePath().toString();
+			}
+			if (Files.isDirectory(configuredPath)) {
+				for (String name : names) {
+					candidates.add(configuredPath.resolve(name));
+				}
+			}
+			else {
+				candidates.add(configuredPath);
+				for (String name : names) {
+					if (!trimmed.equalsIgnoreCase(name)) {
+						candidates.add(Path.of(name));
+					}
+				}
+			}
 		}
-		return "ffprobe";
+		else {
+			for (String name : names) {
+				candidates.add(Path.of(name));
+			}
+		}
+
+		for (String name : names) {
+			candidates.addAll(pathEntries(name));
+			candidates.addAll(wellKnownBins(name));
+		}
+
+		String bareCommand = null;
+		for (Path candidate : candidates) {
+			if (isRunnableFile(candidate)) {
+				return candidate.toAbsolutePath().normalize().toString();
+			}
+			if (bareCommand == null && isBareCommand(candidate)) {
+				bareCommand = candidate.getFileName().toString();
+			}
+		}
+		if (bareCommand != null) {
+			return bareCommand;
+		}
+
+		throw new IllegalArgumentException(
+				"Could not find " + toolName + " on this OS. Install FFmpeg and keep it on PATH, "
+						+ "or set RELAY_FFMPEG_PATH (and optionally RELAY_FFPROBE_PATH) to the executable "
+						+ "or its bin folder. Tried RELAY_FFMPEG_PATH=" + (trimmed.isEmpty() ? "(default ffmpeg)" : trimmed));
+	}
+
+	private List<String> executableNames(String toolName) {
+		String base = toolName.toLowerCase(Locale.ROOT);
+		if (isWindows()) {
+			return List.of(base + ".exe", base);
+		}
+		return List.of(base, base + ".exe");
+	}
+
+	private List<Path> pathEntries(String fileName) {
+		List<Path> found = new ArrayList<>();
+		String pathEnv = System.getenv("PATH");
+		if (pathEnv == null || pathEnv.isBlank()) {
+			return found;
+		}
+		String separator = isWindows() ? ";" : ":";
+		for (String dir : pathEnv.split(separator)) {
+			if (dir == null || dir.isBlank()) {
+				continue;
+			}
+			found.add(Path.of(dir.trim()).resolve(fileName));
+		}
+		return found;
+	}
+
+	private List<Path> wellKnownBins(String fileName) {
+		List<Path> found = new ArrayList<>();
+		String home = System.getProperty("user.home", "");
+		if (isWindows()) {
+			String localAppData = System.getenv("LOCALAPPDATA");
+			if (localAppData != null && !localAppData.isBlank()) {
+				found.add(Path.of(localAppData, "Microsoft", "WinGet", "Links", fileName));
+			}
+			String programFiles = System.getenv("ProgramFiles");
+			if (programFiles != null && !programFiles.isBlank()) {
+				found.add(Path.of(programFiles, "ffmpeg", "bin", fileName));
+			}
+			found.add(Path.of("C:\\ffmpeg\\bin", fileName));
+			if (!home.isBlank()) {
+				found.add(Path.of(home, "scoop", "shims", fileName));
+				found.add(Path.of(home, "AppData", "Local", "Microsoft", "WinGet", "Links", fileName));
+			}
+		}
+		else {
+			found.add(Path.of("/usr/bin", fileName));
+			found.add(Path.of("/usr/local/bin", fileName));
+			found.add(Path.of("/opt/homebrew/bin", fileName));
+			if (!home.isBlank()) {
+				found.add(Path.of(home, ".local", "bin", fileName));
+			}
+		}
+		return found;
+	}
+
+	private boolean isRunnableFile(Path candidate) {
+		try {
+			return candidate != null && Files.isRegularFile(candidate) && Files.isReadable(candidate);
+		}
+		catch (Exception ex) {
+			return false;
+		}
+	}
+
+	private boolean isBareCommand(Path candidate) {
+		if (candidate == null || candidate.getNameCount() != 1) {
+			return false;
+		}
+		String name = candidate.getFileName().toString().toLowerCase(Locale.ROOT);
+		return name.equals("ffmpeg") || name.equals("ffmpeg.exe")
+				|| name.equals("ffprobe") || name.equals("ffprobe.exe");
+	}
+
+	private boolean isWindows() {
+		String os = System.getProperty("os.name", "");
+		return os.toLowerCase(Locale.ROOT).contains("win");
+	}
+
+	private String stripQuotes(String value) {
+		if (value == null) {
+			return "";
+		}
+		String trimmed = value.trim();
+		if (trimmed.length() >= 2) {
+			char first = trimmed.charAt(0);
+			char last = trimmed.charAt(trimmed.length() - 1);
+			if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+				return trimmed.substring(1, trimmed.length() - 1).trim();
+			}
+		}
+		return trimmed;
 	}
 
 	private String run(List<String> command) {
