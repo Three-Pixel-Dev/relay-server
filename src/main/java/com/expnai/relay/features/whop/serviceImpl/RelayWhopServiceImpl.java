@@ -31,6 +31,7 @@ import com.expnai.relay.domain.entity.RelayServiceConnection;
 import com.expnai.relay.domain.entity.RelayThreadMessage;
 import com.expnai.relay.domain.entity.RelayWhopProduct;
 import com.expnai.relay.domain.enums.RelayListingStatus;
+import com.expnai.relay.domain.enums.RelayProductStage;
 import com.expnai.relay.domain.enums.RelayServiceStatus;
 import com.expnai.relay.domain.enums.RelayThreadWho;
 import com.expnai.relay.domain.repository.RelayAuditEventRepository;
@@ -139,6 +140,7 @@ public class RelayWhopServiceImpl implements RelayWhopService {
 			throw new IllegalStateException("Publish preparation returned nothing");
 		}
 		if (plan.alreadyLive()) {
+			transactionTemplate.executeWithoutResult(status -> ensureDistributeStage(productId));
 			return productService.getProduct(productId);
 		}
 
@@ -244,10 +246,14 @@ public class RelayWhopServiceImpl implements RelayWhopService {
 		listing.setUrl(whopPlan.purchaseUrl());
 		listingRepository.save(listing);
 
+		boolean stageChanged = ensureDistributeStage(product);
 		RelayThreadMessage message = new RelayThreadMessage();
 		message.setProduct(product);
 		message.setWho(RelayThreadWho.RELAY);
-		message.setText("Live on Whop. Checkout link: " + whopPlan.purchaseUrl());
+		message.setText(stageChanged
+				? "Live on Whop. Checkout link: " + whopPlan.purchaseUrl()
+						+ ". Next: **Distribute**. Relay runs the channels that bring people; you approve once a week."
+				: "Live on Whop. Checkout link: " + whopPlan.purchaseUrl());
 		threadMessageRepository.save(message);
 
 		RelayAuditEvent audit = new RelayAuditEvent();
@@ -257,6 +263,21 @@ public class RelayWhopServiceImpl implements RelayWhopService {
 		audit.setDetail("Published to Whop product " + row.getExternalProductId() + " at "
 				+ plan.price() + " " + plan.currency());
 		auditEventRepository.save(audit);
+	}
+
+	/** Idempotent: first live checkout advances stage to DISTRIBUTE. Returns true when stage changed. */
+	private boolean ensureDistributeStage(Long productId) {
+		RelayProduct product = productRepository.findById(productId).orElse(null);
+		return product != null && ensureDistributeStage(product);
+	}
+
+	private boolean ensureDistributeStage(RelayProduct product) {
+		if (product.getStage() == RelayProductStage.DISTRIBUTE) {
+			return false;
+		}
+		product.setStage(RelayProductStage.DISTRIBUTE);
+		productRepository.save(product);
+		return true;
 	}
 
 	private String resolveTitle(RelayWhopPublishRequest request, RelayProduct product) {

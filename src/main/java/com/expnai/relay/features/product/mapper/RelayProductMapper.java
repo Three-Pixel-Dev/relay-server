@@ -29,6 +29,7 @@ import com.expnai.relay.features.product.dto.response.RelayProductResponse.Pocke
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.PocketScoresDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ProductFileDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ProductStepDto;
+import com.expnai.relay.features.product.dto.response.RelayProductResponse.ChannelStateDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.PromoteStateDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.PublishStateDto;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse.ReadCountsDto;
@@ -229,7 +230,7 @@ public class RelayProductMapper {
 				steps,
 				thread,
 				new PublishStateDto(List.of(), Map.of(), Map.of(), null, "todo", null),
-				Map.of(),
+				Map.<String, ChannelStateDto>of(),
 				new PromoteStateDto(List.of(), "todo", false),
 				new MetricsDto(0, 0.0, 0, 0),
 				product.getSpend() != null ? product.getSpend() : BigDecimal.ZERO,

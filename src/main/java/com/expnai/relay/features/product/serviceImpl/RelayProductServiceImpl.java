@@ -85,6 +85,7 @@ import com.expnai.relay.features.product.ingest.SourceIngestionWorker;
 import com.expnai.relay.features.product.ingest.SourceQualityService;
 import com.expnai.relay.features.product.ingest.StructureGenerationWorker;
 import com.expnai.relay.features.product.mapper.RelayProductMapper;
+import com.expnai.relay.features.product.service.RelayDistributePromoteReader;
 import com.expnai.relay.features.product.service.RelayProductService;
 import com.expnai.relay.features.product.sse.ProductSseHub;
 import com.expnai.relay.features.product.storage.FileStorageService;
@@ -124,6 +125,7 @@ public class RelayProductServiceImpl implements RelayProductService {
 	private final RelayProductMapper productMapper;
 	private final FileStorageService fileStorageService;
 	private final RelayWhopCommerceReader whopCommerceReader;
+	private final RelayDistributePromoteReader distributePromoteReader;
 	private final RelayAiCredentialService aiCredentialService;
 	private final AiPricingService aiPricingService;
 	private final ListingLlmService listingLlmService;
@@ -1488,8 +1490,10 @@ public class RelayProductServiceImpl implements RelayProductService {
 		List<RelayProductFile> files = productFileRepository.findByProductIdOrderByIdAsc(product.getId());
 		List<RelayThreadMessage> messages = threadMessageRepository
 				.findByProductIdOrderByCreatedAtAscIdAsc(product.getId());
-		return whopCommerceReader.enrich(
-				productMapper.toDto(product, sources, profile, pockets, sections, citations, brand, files, messages),
+		RelayProductResponse base = productMapper.toDto(
+				product, sources, profile, pockets, sections, citations, brand, files, messages);
+		return distributePromoteReader.enrich(
+				whopCommerceReader.enrich(base, product.getId()),
 				product.getId());
 	}
 
