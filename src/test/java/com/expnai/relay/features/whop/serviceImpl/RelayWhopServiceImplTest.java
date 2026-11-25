@@ -37,6 +37,7 @@ import com.expnai.relay.domain.entity.RelayProductFile;
 import com.expnai.relay.domain.entity.RelayServiceConnection;
 import com.expnai.relay.domain.entity.RelayUser;
 import com.expnai.relay.domain.entity.RelayWhopProduct;
+import com.expnai.relay.domain.enums.RelayProductStage;
 import com.expnai.relay.domain.enums.RelayServiceStatus;
 import com.expnai.relay.domain.repository.RelayAuditEventRepository;
 import com.expnai.relay.domain.repository.RelayBrandRepository;
@@ -102,7 +103,10 @@ class RelayWhopServiceImplTest {
 		when(product.getId()).thenReturn(5L);
 		when(product.getName()).thenReturn("Wi-Fi guide");
 		when(product.getUser()).thenReturn(user);
+		when(product.getStage()).thenReturn(RelayProductStage.PUBLISH);
 		when(products.findByIdAndUserId(5L, 7L)).thenReturn(Optional.of(product));
+		when(products.findById(5L)).thenReturn(Optional.of(product));
+		when(products.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		when(files.findByProductIdOrderByIdAsc(5L)).thenReturn(List.of(new RelayProductFile()));
 
 		connection = new RelayServiceConnection();
@@ -184,6 +188,8 @@ class RelayWhopServiceImplTest {
 		verify(listings).save(listing.capture());
 		assertEquals("whop", listing.getValue().getPlatform());
 		assertEquals(0, new BigDecimal("29.00").compareTo(listing.getValue().getPrice()));
+		verify(product).setStage(RelayProductStage.DISTRIBUTE);
+		verify(products).save(product);
 		verify(productService).getProduct(5L);
 	}
 
@@ -192,11 +198,26 @@ class RelayWhopServiceImplTest {
 		RelayWhopProduct live = new RelayWhopProduct();
 		live.setCheckoutUrl("https://whop.com/checkout/plan_1");
 		when(whopProducts.findByProductId(5L)).thenReturn(Optional.of(live));
+		when(product.getStage()).thenReturn(RelayProductStage.PUBLISH);
 
 		service.publish(5L, request("29"));
 
 		verify(client, never()).createProduct(any(), any(), any(), any(), any());
 		verify(client, never()).createPlan(any(), any(), any(), any(), any());
+		verify(product).setStage(RelayProductStage.DISTRIBUTE);
+		verify(productService).getProduct(5L);
+	}
+
+	@Test
+	void publishAlreadyLiveSkipsStageWhenAlreadyDistribute() {
+		RelayWhopProduct live = new RelayWhopProduct();
+		live.setCheckoutUrl("https://whop.com/checkout/plan_1");
+		when(whopProducts.findByProductId(5L)).thenReturn(Optional.of(live));
+		when(product.getStage()).thenReturn(RelayProductStage.DISTRIBUTE);
+
+		service.publish(5L, request("29"));
+
+		verify(product, never()).setStage(any());
 		verify(productService).getProduct(5L);
 	}
 

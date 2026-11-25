@@ -31,7 +31,7 @@ public record RelayProductResponse(
 		List<ProductStepDto> steps,
 		List<ThreadMessageDto> thread,
 		PublishStateDto publish,
-		Map<String, Object> distribute,
+		Map<String, ChannelStateDto> distribute,
 		PromoteStateDto promote,
 		MetricsDto metrics,
 		BigDecimal spend,
@@ -48,6 +48,20 @@ public record RelayProductResponse(
 				id, name, input, mode, forElse, client, partnerId, sources, profile,
 				newOrders, pockets, pocket, type, typePriceSuggestions, structure, words, brand, files, stage, cur, steps, thread,
 				newPublish, distribute, promote, newMetrics, spend, remainingEstimate, pricingAvailable,
+				pricingMessage, qualityWarning, cancelled, created, updated);
+	}
+
+	public RelayProductResponse withDistributePromote(
+			Map<String, ChannelStateDto> newDistribute,
+			PromoteStateDto newPromote,
+			int leads,
+			int visits) {
+		MetricsDto base = metrics != null ? metrics : new MetricsDto(0, 0.0, 0, 0);
+		MetricsDto merged = new MetricsDto(base.sales(), base.revenue(), leads, visits);
+		return new RelayProductResponse(
+				id, name, input, mode, forElse, client, partnerId, sources, profile,
+				orders, pockets, pocket, type, typePriceSuggestions, structure, words, brand, files, stage, cur, steps, thread,
+				publish, newDistribute, newPromote, merged, spend, remainingEstimate, pricingAvailable,
 				pricingMessage, qualityWarning, cancelled, created, updated);
 	}
 
@@ -188,8 +202,24 @@ public record RelayProductResponse(
 	) {
 	}
 
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	public record ChannelStateDto(
+			Boolean on,
+			Boolean setting,
+			Integer week,
+			Integer clicks
+	) {
+	}
+
+	public record PromoVideoDto(
+			String title,
+			String dur,
+			String status
+	) {
+	}
+
 	public record PromoteStateDto(
-			List<Object> videos,
+			List<PromoVideoDto> videos,
 			String status,
 			boolean scheduled
 	) {
