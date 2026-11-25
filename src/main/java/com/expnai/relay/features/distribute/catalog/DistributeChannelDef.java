@@ -26,7 +26,6 @@ public record DistributeChannelDef(
 	/** Services that are still Coming soon in Connections — cannot satisfy a need yet. */
 	public static final List<String> COMING_SOON_SERVICES = List.of(
 			"etsy", "gumroad", "payhip", "kdp",
-			"youtube", "tiktok", "instagram",
 			"convertkit", "stripe",
 			"elevenlabs");
 

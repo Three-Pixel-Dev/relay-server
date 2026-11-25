@@ -75,6 +75,9 @@ public class SecurityConfig {
 			auth.requestMatchers(HttpMethod.POST, "/api/subscription/webhooks/stripe").permitAll();
 			auth.requestMatchers(HttpMethod.GET, "/api/gmail/oauth/callback").permitAll();
 			auth.requestMatchers(HttpMethod.GET, "/api/pinterest/oauth/callback").permitAll();
+			auth.requestMatchers(HttpMethod.GET, "/api/youtube/oauth/callback").permitAll();
+			auth.requestMatchers(HttpMethod.GET, "/api/tiktok/oauth/callback").permitAll();
+			auth.requestMatchers(HttpMethod.GET, "/api/instagram/oauth/callback").permitAll();
 			auth.requestMatchers(HttpMethod.POST, "/api/webhooks/whop/*").permitAll();
 			auth.requestMatchers(HttpMethod.GET, "/api/public/deliveries/**").permitAll();
 			auth.requestMatchers("/actuator/**", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll();
