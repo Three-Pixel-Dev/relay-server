@@ -28,7 +28,7 @@ public record DistributeChannelDef(
 			"etsy", "gumroad", "payhip", "kdp",
 			"pinterest", "youtube", "tiktok", "instagram",
 			"beehiiv", "convertkit", "stripe",
-			"higgsfield", "elevenlabs");
+			"elevenlabs");
 
 	public static Optional<DistributeChannelDef> find(String channelId) {
 		if (channelId == null || channelId.isBlank()) {

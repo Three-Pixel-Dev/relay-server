@@ -211,11 +211,16 @@ public record RelayProductResponse(
 	) {
 	}
 
+	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record PromoVideoDto(
 			String title,
 			String dur,
-			String status
+			String status,
+			String url
 	) {
+		public PromoVideoDto(String title, String dur, String status) {
+			this(title, dur, status, null);
+		}
 	}
 
 	@JsonInclude(JsonInclude.Include.NON_NULL)

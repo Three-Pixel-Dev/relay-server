@@ -34,10 +34,13 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class RelayDistributePromoteReader {
 
-	/** Prototype / PRD hint: ~$7 for ten flip-through Shorts. */
-	public static final BigDecimal PROMOTE_TOTAL_ESTIMATE_USD = new BigDecimal("7.00");
-	public static final BigDecimal PROMOTE_FIRST_VIDEO_USD = new BigDecimal("0.70");
-	public static final BigDecimal PROMOTE_REMAINING_USD = new BigDecimal("6.30");
+	/**
+	 * Real spend estimates for Wan 3.0 text-to-video at 480p (Higgsfield list floor
+	 * $0.038/s × 20s). Ten Shorts ≈ $7.60 — close to the prototype ~$7 hint.
+	 */
+	public static final BigDecimal PROMOTE_FIRST_VIDEO_USD = new BigDecimal("0.76");
+	public static final BigDecimal PROMOTE_REMAINING_USD = new BigDecimal("6.84");
+	public static final BigDecimal PROMOTE_TOTAL_ESTIMATE_USD = new BigDecimal("7.60");
 
 	private final RelayChannelRepository channelRepository;
 	private final RelayPromoAssetRepository promoAssetRepository;
@@ -106,7 +109,8 @@ public class RelayDistributePromoteReader {
 				.map(asset -> new PromoVideoDto(
 						asset.getTitle() != null ? asset.getTitle() : "",
 						asset.getDuration() != null ? asset.getDuration() : "",
-						videoStatus(asset.getStatus())))
+						videoStatus(asset.getStatus()),
+						publicVideoUrl(asset.getUrl())))
 				.toList();
 		boolean scheduled = videos.stream().anyMatch(a -> a.getStatus() == RelayPromoAssetStatus.SCHEDULED);
 		String status = promoteStatus(videos);
@@ -130,6 +134,21 @@ public class RelayDistributePromoteReader {
 			return "review";
 		}
 		return status.getCode().toLowerCase(Locale.ROOT);
+	}
+
+	/** Hide in-flight Higgsfield request ids; only expose completed https video URLs. */
+	private static String publicVideoUrl(String url) {
+		if (url == null || url.isBlank()) {
+			return null;
+		}
+		String trimmed = url.trim();
+		if (trimmed.startsWith("higgsfield:")) {
+			return null;
+		}
+		if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+			return trimmed;
+		}
+		return null;
 	}
 
 	private static String promoteStatus(List<RelayPromoAsset> videos) {

@@ -4,6 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,6 +17,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,10 +29,12 @@ import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.domain.entity.RelayProduct;
 import com.expnai.relay.domain.entity.RelayPromoAsset;
+import com.expnai.relay.domain.entity.RelayServiceConnection;
 import com.expnai.relay.domain.entity.RelayUser;
 import com.expnai.relay.domain.enums.RelayProductStage;
 import com.expnai.relay.domain.enums.RelayPromoAssetStatus;
 import com.expnai.relay.domain.enums.RelayPromoAssetType;
+import com.expnai.relay.domain.enums.RelayServiceStatus;
 import com.expnai.relay.domain.repository.RelayAuditEventRepository;
 import com.expnai.relay.domain.repository.RelayProductRepository;
 import com.expnai.relay.domain.repository.RelayPromoAssetRepository;
@@ -36,6 +43,9 @@ import com.expnai.relay.domain.repository.RelayUserRepository;
 import com.expnai.relay.domain.repository.RelayWhopProductRepository;
 import com.expnai.relay.features.auth.security.RelayUserPrincipal;
 import com.expnai.relay.features.product.service.RelayProductService;
+import com.expnai.relay.features.promote.higgsfield.HiggsfieldClient;
+import com.expnai.relay.features.promote.higgsfield.RelayHiggsfieldCredentialService;
+import com.expnai.relay.features.promote.worker.PromoteVideoWorker;
 
 class RelayPromoteServiceImplTest {
 
@@ -46,11 +56,14 @@ class RelayPromoteServiceImplTest {
 	private RelayWhopProductRepository whopProducts;
 	private RelayAuditEventRepository audits;
 	private RelayProductService productService;
+	private RelayHiggsfieldCredentialService higgsfieldCredentials;
+	private PromoteVideoWorker worker;
 	private RelayPromoteServiceImpl service;
 
 	private RelayUser user;
 	private RelayProduct product;
 	private List<RelayPromoAsset> stored;
+	private AtomicLong ids;
 
 	@BeforeEach
 	void setUp() {
@@ -61,8 +74,11 @@ class RelayPromoteServiceImplTest {
 		whopProducts = mock(RelayWhopProductRepository.class);
 		audits = mock(RelayAuditEventRepository.class);
 		productService = mock(RelayProductService.class);
+		higgsfieldCredentials = mock(RelayHiggsfieldCredentialService.class);
+		worker = mock(PromoteVideoWorker.class);
 		service = new RelayPromoteServiceImpl(
-				products, users, promoAssets, connections, whopProducts, audits, productService);
+				products, users, promoAssets, connections, whopProducts, audits, productService,
+				higgsfieldCredentials, worker);
 
 		user = mock(RelayUser.class);
 		when(user.getId()).thenReturn(7L);
@@ -80,12 +96,17 @@ class RelayPromoteServiceImplTest {
 		when(products.save(any())).thenAnswer(inv -> inv.getArgument(0));
 		when(productService.getProduct(5L)).thenReturn(ApiResponse.ok("OK", null));
 		when(audits.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		doNothing().when(worker).generateAsync(anyLong(), anyLong(), anyLong(), anyBoolean());
 
+		ids = new AtomicLong(100);
 		stored = new ArrayList<>();
 		when(promoAssets.findByProductIdAndAssetTypeOrderByIdAsc(5L, RelayPromoAssetType.VIDEO))
 				.thenAnswer(inv -> List.copyOf(stored));
 		when(promoAssets.save(any())).thenAnswer(inv -> {
 			RelayPromoAsset asset = inv.getArgument(0);
+			if (asset.getId() == null) {
+				asset.setId(ids.getAndIncrement());
+			}
 			if (!stored.contains(asset) && asset.isEnable()) {
 				stored.add(asset);
 			}
@@ -94,6 +115,10 @@ class RelayPromoteServiceImplTest {
 			}
 			return asset;
 		});
+
+		when(connections.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
+				eq(7L), eq("higgsfield"), eq(RelayServiceStatus.CONNECTED)))
+				.thenReturn(Optional.of(mock(RelayServiceConnection.class)));
 	}
 
 	@AfterEach
@@ -102,30 +127,38 @@ class RelayPromoteServiceImplTest {
 	}
 
 	@Test
-	void startFailsWhileHiggsfieldComingSoon() {
+	void startEnqueuesRunningFirstVideo() {
+		service.start(5L);
+
+		assertEquals(1, stored.size());
+		assertEquals(RelayPromoAssetStatus.RUNNING, stored.get(0).getStatus());
+		verify(worker).generateAsync(5L, 7L, stored.get(0).getId(), true);
+		verify(product, never()).setSpend(any());
+	}
+
+	@Test
+	void startFailsWithoutHiggsfield() {
+		when(connections.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
+				eq(7L), eq("higgsfield"), eq(RelayServiceStatus.CONNECTED)))
+				.thenReturn(Optional.empty());
+		when(higgsfieldCredentials.requireCredentials(7L))
+				.thenThrow(new BusinessRuleException("Add your Higgsfield key in Connections first."));
+
 		BusinessRuleException ex = assertThrows(BusinessRuleException.class, () -> service.start(5L));
-		assertTrue(ex.getMessage().toLowerCase().contains("coming soon"));
+		assertTrue(ex.getMessage().toLowerCase().contains("higgsfield"));
 		verify(promoAssets, never()).save(any());
 	}
 
 	@Test
-	void redoFailsWhileHiggsfieldComingSoon() {
-		RelayPromoAsset gate = gateVideo();
-		stored.add(gate);
-		BusinessRuleException ex = assertThrows(BusinessRuleException.class, () -> service.redo(5L));
-		assertTrue(ex.getMessage().toLowerCase().contains("coming soon"));
-	}
-
-	@Test
-	void approveGateCreatesNineMoreAndChargesSpend() {
+	void approveGateEnqueuesNineRunning() {
 		stored.add(gateVideo());
 
 		service.approve(5L);
 
 		assertEquals(10, stored.size());
 		assertEquals(RelayPromoAssetStatus.DONE, stored.get(0).getStatus());
-		assertTrue(stored.stream().skip(1).allMatch(a -> a.getStatus() == RelayPromoAssetStatus.DONE));
-		verify(product).setSpend(any());
+		assertTrue(stored.stream().skip(1).allMatch(a -> a.getStatus() == RelayPromoAssetStatus.RUNNING));
+		verify(worker, org.mockito.Mockito.times(9)).generateAsync(eq(5L), eq(7L), anyLong(), eq(false));
 		verify(audits).save(any());
 		verify(productService).getProduct(5L);
 	}
@@ -158,8 +191,25 @@ class RelayPromoteServiceImplTest {
 		assertTrue(ex.getMessage().toLowerCase().contains("approve"));
 	}
 
+	@Test
+	void promptMentionsProductAndClip() {
+		String prompt = PromoteVideoWorker.buildPrompt("Calmer Walks", "3 things inside", "walk routine");
+		assertTrue(prompt.contains("Calmer Walks"));
+		assertTrue(prompt.contains("3 things inside"));
+		assertTrue(prompt.contains("9:16"));
+	}
+
+	@Test
+	void parseHiggsfieldCredentials() {
+		var creds = HiggsfieldClient.parseCredentials("abc123:secret-value-here");
+		assertEquals("abc123", creds.keyId());
+		assertEquals("secret-value-here", creds.keySecret());
+		assertEquals("Key abc123:secret-value-here", creds.authorizationHeader());
+	}
+
 	private RelayPromoAsset gateVideo() {
 		RelayPromoAsset gate = new RelayPromoAsset();
+		gate.setId(1L);
 		gate.setProduct(product);
 		gate.setAssetType(RelayPromoAssetType.VIDEO);
 		gate.setStatus(RelayPromoAssetStatus.GATE);

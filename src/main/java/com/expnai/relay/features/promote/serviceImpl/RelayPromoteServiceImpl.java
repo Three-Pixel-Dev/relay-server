@@ -1,7 +1,7 @@
 package com.expnai.relay.features.promote.serviceImpl;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -9,6 +9,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
@@ -34,7 +36,9 @@ import com.expnai.relay.features.distribute.catalog.DistributeChannelDef;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.service.RelayDistributePromoteReader;
 import com.expnai.relay.features.product.service.RelayProductService;
+import com.expnai.relay.features.promote.higgsfield.RelayHiggsfieldCredentialService;
 import com.expnai.relay.features.promote.service.RelayPromoteService;
+import com.expnai.relay.features.promote.worker.PromoteVideoWorker;
 
 import lombok.RequiredArgsConstructor;
 
@@ -61,6 +65,8 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 	private final RelayWhopProductRepository whopProductRepository;
 	private final RelayAuditEventRepository auditEventRepository;
 	private final RelayProductService productService;
+	private final RelayHiggsfieldCredentialService higgsfieldCredentialService;
+	private final PromoteVideoWorker promoteVideoWorker;
 
 	@Override
 	@Transactional
@@ -76,16 +82,19 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 
 		RelayUser user = requireCurrentUser();
 		recordAudit(user, product, "PROMOTE_START",
-				"Start first promo video (estimate $"
-						+ RelayDistributePromoteReader.PROMOTE_TOTAL_ESTIMATE_USD
-						+ "; first ~$"
+				"Start first promo video via Higgsfield (estimate $"
 						+ RelayDistributePromoteReader.PROMOTE_FIRST_VIDEO_USD
+						+ " of ~$"
+						+ RelayDistributePromoteReader.PROMOTE_TOTAL_ESTIMATE_USD
 						+ ")");
 
-		// Stub generation: persist first video at GATE (no real Higgsfield render yet).
-		RelayPromoAsset first = newVideo(product, "3 things inside", "0:20", RelayPromoAssetStatus.GATE);
+		RelayPromoAsset first = newVideo(product, "3 things inside", "0:20", RelayPromoAssetStatus.RUNNING);
 		promoAssetRepository.save(first);
-		addSpend(product, RelayDistributePromoteReader.PROMOTE_FIRST_VIDEO_USD);
+
+		Long uid = user.getId();
+		Long pid = product.getId();
+		Long assetId = first.getId();
+		runAfterCommit(() -> promoteVideoWorker.generateAsync(pid, uid, assetId, true));
 
 		return productService.getProduct(productId);
 	}
@@ -96,22 +105,38 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 		RelayProduct product = requirePromoteUnlocked(productId);
 		List<RelayPromoAsset> existing = videos(productId);
 		RelayPromoAsset first = requireGateVideo(existing);
+		requireHiggsfield(product.getUser().getId());
 
 		RelayUser user = requireCurrentUser();
-		recordAudit(user, product, "PROMOTE_APPROVE", "Approved first promo video; enqueue remaining 9 (stub)");
+		recordAudit(user, product, "PROMOTE_APPROVE",
+				"Approved first promo video; enqueue remaining 9 via Higgsfield (estimate $"
+						+ RelayDistributePromoteReader.PROMOTE_REMAINING_USD
+						+ ")");
 
 		first.setStatus(RelayPromoAssetStatus.DONE);
 		promoAssetRepository.save(first);
 
+		List<Long> restIds = new ArrayList<>();
 		int i = 0;
 		for (String title : REST_TITLES) {
 			int seconds = 18 + (i % 10);
-			RelayPromoAsset rest = newVideo(product, title, "0:" + String.format(Locale.ROOT, "%02d", seconds),
-					RelayPromoAssetStatus.DONE);
+			RelayPromoAsset rest = newVideo(
+					product,
+					title,
+					"0:" + String.format(Locale.ROOT, "%02d", seconds),
+					RelayPromoAssetStatus.RUNNING);
 			promoAssetRepository.save(rest);
+			restIds.add(rest.getId());
 			i++;
 		}
-		addSpend(product, RelayDistributePromoteReader.PROMOTE_REMAINING_USD);
+
+		Long uid = user.getId();
+		Long pid = product.getId();
+		runAfterCommit(() -> {
+			for (Long assetId : restIds) {
+				promoteVideoWorker.generateAsync(pid, uid, assetId, false);
+			}
+		});
 
 		return productService.getProduct(productId);
 	}
@@ -125,16 +150,20 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 		requireGateVideo(existing);
 
 		RelayUser user = requireCurrentUser();
-		recordAudit(user, product, "PROMOTE_REDO", "Regenerate first promo video (stub)");
+		recordAudit(user, product, "PROMOTE_REDO", "Regenerate first promo video via Higgsfield");
 
 		for (RelayPromoAsset asset : existing) {
 			asset.delete();
 			promoAssetRepository.save(asset);
 		}
 
-		RelayPromoAsset first = newVideo(product, "3 things inside", "0:20", RelayPromoAssetStatus.GATE);
+		RelayPromoAsset first = newVideo(product, "3 things inside", "0:20", RelayPromoAssetStatus.RUNNING);
 		promoAssetRepository.save(first);
-		addSpend(product, RelayDistributePromoteReader.PROMOTE_FIRST_VIDEO_USD);
+
+		Long uid = user.getId();
+		Long pid = product.getId();
+		Long assetId = first.getId();
+		runAfterCommit(() -> promoteVideoWorker.generateAsync(pid, uid, assetId, true));
 
 		return productService.getProduct(productId);
 	}
@@ -180,7 +209,13 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 						userId, "higgsfield", RelayServiceStatus.CONNECTED)
 				.isPresent();
 		if (!connected) {
-			throw new BusinessRuleException("Add your Higgsfield key in Connections first.");
+			// Allow env fallback used by credential service.
+			try {
+				higgsfieldCredentialService.requireCredentials(userId);
+			}
+			catch (BusinessRuleException ex) {
+				throw new BusinessRuleException("Add your Higgsfield key in Connections first.");
+			}
 		}
 	}
 
@@ -236,14 +271,8 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 		asset.setTitle(title);
 		asset.setDuration(duration);
 		asset.setStatus(status);
-		asset.setUrl(null); // stub — no rendered file yet
+		asset.setUrl(null);
 		return asset;
-	}
-
-	private void addSpend(RelayProduct product, BigDecimal amount) {
-		BigDecimal current = product.getSpend() != null ? product.getSpend() : BigDecimal.ZERO;
-		product.setSpend(current.add(amount).setScale(6, RoundingMode.HALF_UP));
-		productRepository.save(product);
 	}
 
 	private RelayProduct requirePromoteUnlocked(Long productId) {
@@ -274,6 +303,20 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 		event.setAction(action);
 		event.setDetail(detail);
 		auditEventRepository.save(event);
+	}
+
+	private static void runAfterCommit(Runnable action) {
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCommit() {
+					action.run();
+				}
+			});
+		}
+		else {
+			action.run();
+		}
 	}
 
 	private RelayUser requireCurrentUser() {
