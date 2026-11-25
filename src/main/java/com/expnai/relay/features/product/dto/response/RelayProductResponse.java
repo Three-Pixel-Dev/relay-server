@@ -218,11 +218,17 @@ public record RelayProductResponse(
 	) {
 	}
 
+	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record PromoteStateDto(
 			List<PromoVideoDto> videos,
 			String status,
-			boolean scheduled
+			boolean scheduled,
+			BigDecimal estimateUsd,
+			BigDecimal nextSpendUsd
 	) {
+		public PromoteStateDto(List<PromoVideoDto> videos, String status, boolean scheduled) {
+			this(videos, status, scheduled, null, null);
+		}
 	}
 
 	public record MetricsDto(

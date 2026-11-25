@@ -1,5 +1,6 @@
 package com.expnai.relay.features.product.service;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -32,6 +33,11 @@ import lombok.RequiredArgsConstructor;
 @Component
 @RequiredArgsConstructor
 public class RelayDistributePromoteReader {
+
+	/** Prototype / PRD hint: ~$7 for ten flip-through Shorts. */
+	public static final BigDecimal PROMOTE_TOTAL_ESTIMATE_USD = new BigDecimal("7.00");
+	public static final BigDecimal PROMOTE_FIRST_VIDEO_USD = new BigDecimal("0.70");
+	public static final BigDecimal PROMOTE_REMAINING_USD = new BigDecimal("6.30");
 
 	private final RelayChannelRepository channelRepository;
 	private final RelayPromoAssetRepository promoAssetRepository;
@@ -89,7 +95,12 @@ public class RelayDistributePromoteReader {
 
 	private PromoteStateDto toPromote(List<RelayPromoAsset> videos) {
 		if (videos == null || videos.isEmpty()) {
-			return new PromoteStateDto(List.of(), "todo", false);
+			return new PromoteStateDto(
+					List.of(),
+					"todo",
+					false,
+					PROMOTE_TOTAL_ESTIMATE_USD,
+					PROMOTE_FIRST_VIDEO_USD);
 		}
 		List<PromoVideoDto> videoDtos = videos.stream()
 				.map(asset -> new PromoVideoDto(
@@ -98,7 +109,17 @@ public class RelayDistributePromoteReader {
 						videoStatus(asset.getStatus())))
 				.toList();
 		boolean scheduled = videos.stream().anyMatch(a -> a.getStatus() == RelayPromoAssetStatus.SCHEDULED);
-		return new PromoteStateDto(videoDtos, promoteStatus(videos), scheduled);
+		String status = promoteStatus(videos);
+		BigDecimal estimate = PROMOTE_TOTAL_ESTIMATE_USD;
+		BigDecimal nextSpend = switch (status) {
+			case "todo", "running" -> PROMOTE_FIRST_VIDEO_USD;
+			case "gate" -> PROMOTE_REMAINING_USD;
+			default -> null;
+		};
+		if ("done".equals(status) || scheduled) {
+			estimate = null;
+		}
+		return new PromoteStateDto(videoDtos, status, scheduled, estimate, nextSpend);
 	}
 
 	private static String videoStatus(RelayPromoAssetStatus status) {
