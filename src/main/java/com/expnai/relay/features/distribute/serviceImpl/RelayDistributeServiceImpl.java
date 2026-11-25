@@ -9,6 +9,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
@@ -34,6 +36,7 @@ import com.expnai.relay.features.auth.security.RelayUserPrincipal;
 import com.expnai.relay.features.distribute.catalog.DistributeChannelDef;
 import com.expnai.relay.features.distribute.service.RelayDistributeService;
 import com.expnai.relay.features.distribute.setup.DistributeChannelSetupStub;
+import com.expnai.relay.features.distribute.worker.DistributeOutboundWorker;
 import com.expnai.relay.features.product.dto.response.RelayProductResponse;
 import com.expnai.relay.features.product.service.RelayProductService;
 
@@ -51,6 +54,7 @@ public class RelayDistributeServiceImpl implements RelayDistributeService {
 	private final RelayWhopProductRepository whopProductRepository;
 	private final RelayAuditEventRepository auditEventRepository;
 	private final DistributeChannelSetupStub setupStub;
+	private final DistributeOutboundWorker outboundWorker;
 	private final RelayProductService productService;
 
 	@Override
@@ -131,6 +135,7 @@ public class RelayDistributeServiceImpl implements RelayDistributeService {
 		recordAudit(user, product, "DISTRIBUTE_WEEK_APPROVE",
 				"Approved weekly batch for " + enabled.size() + " channel(s)");
 
+		List<Long> batchIds = new java.util.ArrayList<>();
 		for (RelayChannel channel : enabled) {
 			int nextWeek = (channel.getWeekNumber() != null ? channel.getWeekNumber() : 0) + 1;
 			channel.setWeekNumber(nextWeek);
@@ -139,12 +144,34 @@ public class RelayDistributeServiceImpl implements RelayDistributeService {
 			RelayBatch batch = new RelayBatch();
 			batch.setChannel(channel);
 			batch.setApprovedAt(Instant.now());
-			batch.setPostedAt(null); // never auto-post
+			batch.setPostedAt(null); // nothing posts without this approve + worker
 			batch.setItemsJson(setupStub.buildWeekItemsJson(channel, nextWeek));
-			batchRepository.save(batch);
+			batch = batchRepository.save(batch);
+			batchIds.add(batch.getId());
 		}
 
+		Long uid = user.getId();
+		runAfterCommit(() -> {
+			for (Long batchId : batchIds) {
+				outboundWorker.processBatchAsync(batchId, uid);
+			}
+		});
+
 		return productService.getProduct(productId);
+	}
+
+	private static void runAfterCommit(Runnable action) {
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCommit() {
+					action.run();
+				}
+			});
+		}
+		else {
+			action.run();
+		}
 	}
 
 	private RelayProduct requireDistributeUnlocked(Long productId) {

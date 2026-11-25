@@ -11,12 +11,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
+import com.expnai.relay.features.beehiiv.BeehiivClient;
 import com.expnai.relay.features.promote.higgsfield.HiggsfieldClient;
 
 /**
- * Validates user-supplied AI provider keys (Gemini AIza.../AQ...., OpenAI sk-...,
- * Higgsfield KEY_ID:KEY_SECRET, ElevenLabs) with a lightweight provider probe
- * before saving a connection as CONNECTED.
+ * Validates user-supplied provider keys (Gemini, OpenAI, Higgsfield KEY_ID:KEY_SECRET,
+ * beehiiv, ElevenLabs) with a lightweight provider probe before saving a connection as CONNECTED.
  */
 @Service
 public class AiKeyValidationService {
@@ -25,9 +25,11 @@ public class AiKeyValidationService {
 	private static final String INVALID_KEY_MESSAGE = "This key is not valid";
 
 	private final HiggsfieldClient higgsfieldClient;
+	private final BeehiivClient beehiivClient;
 
-	public AiKeyValidationService(HiggsfieldClient higgsfieldClient) {
+	public AiKeyValidationService(HiggsfieldClient higgsfieldClient, BeehiivClient beehiivClient) {
 		this.higgsfieldClient = higgsfieldClient;
+		this.beehiivClient = beehiivClient;
 	}
 
 	public void validateKey(String serviceId, String rawKey) {
@@ -43,6 +45,10 @@ public class AiKeyValidationService {
 		}
 		if ("elevenlabs".equals(id) || "eleven".equals(id)) {
 			probeElevenLabs(key);
+			return;
+		}
+		if ("beehiiv".equals(id)) {
+			beehiivClient.probeApiKey(key);
 			return;
 		}
 
@@ -148,4 +154,3 @@ public class AiKeyValidationService {
 		}
 	}
 }
-
