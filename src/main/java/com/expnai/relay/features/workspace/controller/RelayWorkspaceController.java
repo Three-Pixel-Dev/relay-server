@@ -158,7 +158,8 @@ public class RelayWorkspaceController {
 			return false;
 		}
 		return switch (serviceId.trim().toLowerCase()) {
-			case "llm", "gemini", "google", "google-ai", "img", "image", "gemini-image" -> true;
+			case "llm", "gemini", "google", "google-ai", "img", "image", "gemini-image",
+					"higgsfield", "hf", "elevenlabs", "eleven" -> true;
 			default -> false;
 		};
 	}

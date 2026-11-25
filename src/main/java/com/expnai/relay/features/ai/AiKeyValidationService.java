@@ -11,10 +11,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
+import com.expnai.relay.features.promote.higgsfield.HiggsfieldClient;
 
 /**
- * Validates user-supplied AI provider keys (Gemini AIza.../AQ.... or OpenAI sk-...)
- * with a lightweight provider probe before saving a connection as CONNECTED.
+ * Validates user-supplied AI provider keys (Gemini AIza.../AQ...., OpenAI sk-...,
+ * Higgsfield KEY_ID:KEY_SECRET, ElevenLabs) with a lightweight provider probe
+ * before saving a connection as CONNECTED.
  */
 @Service
 public class AiKeyValidationService {
@@ -22,19 +24,35 @@ public class AiKeyValidationService {
 	private static final Logger log = LoggerFactory.getLogger(AiKeyValidationService.class);
 	private static final String INVALID_KEY_MESSAGE = "This key is not valid";
 
+	private final HiggsfieldClient higgsfieldClient;
+
+	public AiKeyValidationService(HiggsfieldClient higgsfieldClient) {
+		this.higgsfieldClient = higgsfieldClient;
+	}
+
 	public void validateKey(String serviceId, String rawKey) {
 		String key = rawKey != null ? rawKey.trim() : "";
 		if (key.length() < 10 || key.contains(" ") || key.contains("\n") || key.contains("\r")) {
 			throw new BusinessRuleException(INVALID_KEY_MESSAGE);
 		}
 
-		boolean requiresGemini = "llm".equalsIgnoreCase(serviceId)
-				|| "gemini".equalsIgnoreCase(serviceId)
-				|| "google".equalsIgnoreCase(serviceId)
-				|| "google-ai".equalsIgnoreCase(serviceId)
-				|| "img".equalsIgnoreCase(serviceId)
-				|| "image".equalsIgnoreCase(serviceId)
-				|| "gemini-image".equalsIgnoreCase(serviceId);
+		String id = serviceId != null ? serviceId.trim().toLowerCase() : "";
+		if ("higgsfield".equals(id) || "hf".equals(id)) {
+			higgsfieldClient.probeAuth(HiggsfieldClient.parseCredentials(key));
+			return;
+		}
+		if ("elevenlabs".equals(id) || "eleven".equals(id)) {
+			probeElevenLabs(key);
+			return;
+		}
+
+		boolean requiresGemini = "llm".equals(id)
+				|| "gemini".equals(id)
+				|| "google".equals(id)
+				|| "google-ai".equals(id)
+				|| "img".equals(id)
+				|| "image".equals(id)
+				|| "gemini-image".equals(id);
 
 		if (requiresGemini && key.startsWith("sk-")) {
 			throw new BusinessRuleException(
@@ -99,6 +117,33 @@ public class AiKeyValidationService {
 		}
 		catch (Exception ex) {
 			log.warn("OpenAI key validation probe failed: {}", ex.getMessage());
+			throw new BusinessRuleException(INVALID_KEY_MESSAGE);
+		}
+	}
+
+	private void probeElevenLabs(String key) {
+		try {
+			HttpClient http = HttpClient.newBuilder()
+					.connectTimeout(Duration.ofSeconds(8))
+					.build();
+			HttpRequest req = HttpRequest.newBuilder()
+					.uri(URI.create("https://api.elevenlabs.io/v1/user"))
+					.timeout(Duration.ofSeconds(10))
+					.header("xi-api-key", key)
+					.header("Accept", "application/json")
+					.GET()
+					.build();
+			HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+			if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+				log.warn("ElevenLabs key validation probe rejected with HTTP {}", resp.statusCode());
+				throw new BusinessRuleException(INVALID_KEY_MESSAGE);
+			}
+		}
+		catch (BusinessRuleException ex) {
+			throw ex;
+		}
+		catch (Exception ex) {
+			log.warn("ElevenLabs key validation probe failed: {}", ex.getMessage());
 			throw new BusinessRuleException(INVALID_KEY_MESSAGE);
 		}
 	}

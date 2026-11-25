@@ -22,7 +22,7 @@ public class RelayPromoteController {
 	private final RelayPromoteService promoteService;
 
 	@PostMapping("/start")
-	@Operation(summary = "Start first promo Short (spend estimate; requires Higgsfield; stub generation to GATE)")
+	@Operation(summary = "Start first promo Short (spend estimate; requires Higgsfield; async render to GATE)")
 	public ApiResponse<RelayProductResponse> start(@PathVariable Long productId) {
 		return promoteService.start(productId);
 	}
