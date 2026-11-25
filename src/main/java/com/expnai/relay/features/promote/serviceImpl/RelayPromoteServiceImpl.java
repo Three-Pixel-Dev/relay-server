@@ -1,9 +1,12 @@
 package com.expnai.relay.features.promote.serviceImpl;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Collectors;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -185,15 +188,26 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 			throw new BusinessRuleException(
 					"Approve the first video and finish the set of 10 before scheduling.");
 		}
-		requireReachAccount(product.getUser().getId());
+		List<String> platforms = requireReachAccount(product.getUser().getId());
 
 		RelayUser user = requireCurrentUser();
 		recordAudit(user, product, "PROMOTE_SCHEDULE",
-				"Schedule 10 Shorts one per day (stub — nothing posts yet)");
+				"Schedule 10 Shorts one per day to " + String.join(", ", platforms)
+						+ " (nothing posts without this Schedule action)");
 
+		Instant start = Instant.now().truncatedTo(ChronoUnit.DAYS);
+		int day = 0;
 		for (RelayPromoAsset asset : existing) {
+			if (asset.getUrl() == null || !(asset.getUrl().startsWith("http://") || asset.getUrl().startsWith("https://"))) {
+				throw new BusinessRuleException(
+						"Every Short needs a rendered video URL before scheduling. Wait for generation to finish.");
+			}
 			asset.setStatus(RelayPromoAssetStatus.SCHEDULED);
+			asset.setScheduledFor(start.plus(day, ChronoUnit.DAYS));
+			asset.setPostedAt(null);
+			asset.setPostResultsJson(null);
 			promoAssetRepository.save(asset);
+			day++;
 		}
 
 		return productService.getProduct(productId);
@@ -219,20 +233,18 @@ public class RelayPromoteServiceImpl implements RelayPromoteService {
 		}
 	}
 
-	private void requireReachAccount(Long userId) {
-		boolean anyComingSoonOnly = true;
-		for (String serviceId : REACH_SERVICES) {
-			if (!DistributeChannelDef.isComingSoon(serviceId)) {
-				anyComingSoonOnly = false;
-				boolean connected = connectionRepository
+	private List<String> requireReachAccount(Long userId) {
+		List<String> connected = REACH_SERVICES.stream()
+				.filter(serviceId -> !DistributeChannelDef.isComingSoon(serviceId))
+				.filter(serviceId -> connectionRepository
 						.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
 								userId, serviceId, RelayServiceStatus.CONNECTED)
-						.isPresent();
-				if (connected) {
-					return;
-				}
-			}
+						.isPresent())
+				.collect(Collectors.toList());
+		if (!connected.isEmpty()) {
+			return connected;
 		}
+		boolean anyComingSoonOnly = REACH_SERVICES.stream().allMatch(DistributeChannelDef::isComingSoon);
 		if (anyComingSoonOnly) {
 			throw new BusinessRuleException(
 					"YouTube, TikTok and Instagram are coming soon in Connections. You can't schedule yet.");

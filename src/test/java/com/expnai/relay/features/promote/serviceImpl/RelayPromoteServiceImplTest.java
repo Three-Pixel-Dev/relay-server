@@ -169,7 +169,7 @@ class RelayPromoteServiceImplTest {
 	}
 
 	@Test
-	void scheduleFailsWhileReachComingSoon() {
+	void scheduleFailsWithoutReachAccount() {
 		for (int i = 0; i < 10; i++) {
 			RelayPromoAsset v = new RelayPromoAsset();
 			v.setProduct(product);
@@ -177,11 +177,45 @@ class RelayPromoteServiceImplTest {
 			v.setStatus(RelayPromoAssetStatus.DONE);
 			v.setTitle("v" + i);
 			v.setDuration("0:20");
+			v.setUrl("https://cdn.example.com/v" + i + ".mp4");
 			stored.add(v);
 		}
+		when(connections.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
+				eq(7L), org.mockito.ArgumentMatchers.anyString(), eq(RelayServiceStatus.CONNECTED)))
+				.thenReturn(Optional.empty());
 		BusinessRuleException ex = assertThrows(BusinessRuleException.class, () -> service.schedule(5L));
-		assertTrue(ex.getMessage().toLowerCase().contains("coming soon"));
+		assertTrue(ex.getMessage().toLowerCase().contains("connect"));
 		verify(promoAssets, never()).save(any());
+	}
+
+	@Test
+	void scheduleSetsOnePerDayWhenYoutubeConnected() {
+		for (int i = 0; i < 10; i++) {
+			RelayPromoAsset v = new RelayPromoAsset();
+			v.setId((long) (i + 1));
+			v.setProduct(product);
+			v.setAssetType(RelayPromoAssetType.VIDEO);
+			v.setStatus(RelayPromoAssetStatus.DONE);
+			v.setTitle("v" + i);
+			v.setDuration("0:20");
+			v.setUrl("https://cdn.example.com/v" + i + ".mp4");
+			stored.add(v);
+		}
+		when(connections.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
+				eq(7L), eq("youtube"), eq(RelayServiceStatus.CONNECTED)))
+				.thenReturn(Optional.of(mock(RelayServiceConnection.class)));
+		when(connections.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
+				eq(7L), eq("tiktok"), eq(RelayServiceStatus.CONNECTED)))
+				.thenReturn(Optional.empty());
+		when(connections.findFirstByUserIdAndServiceIdIgnoreCaseAndStatusOrderByCreatedAtDesc(
+				eq(7L), eq("instagram"), eq(RelayServiceStatus.CONNECTED)))
+				.thenReturn(Optional.empty());
+
+		service.schedule(5L);
+
+		assertTrue(stored.stream().allMatch(a -> a.getStatus() == RelayPromoAssetStatus.SCHEDULED));
+		assertTrue(stored.stream().allMatch(a -> a.getScheduledFor() != null));
+		assertEquals(10, stored.stream().map(RelayPromoAsset::getScheduledFor).distinct().count());
 	}
 
 	@Test

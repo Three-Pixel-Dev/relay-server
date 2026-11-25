@@ -1,5 +1,7 @@
 package com.expnai.relay.domain.entity;
 
+import java.time.Instant;
+
 import com.expnai.relay.common.persistence.MasterEntity;
 import com.expnai.relay.domain.enums.RelayPromoAssetStatus;
 import com.expnai.relay.domain.enums.RelayPromoAssetType;
@@ -37,4 +39,16 @@ public class RelayPromoAsset extends MasterEntity {
 
 	@Column(name = "url", length = 2000)
 	private String url;
+
+	/** When Schedule was pressed: day this Short should post (one/day). Null until scheduled. */
+	@Column(name = "scheduled_for")
+	private Instant scheduledFor;
+
+	/** First successful platform post time. */
+	@Column(name = "posted_at")
+	private Instant postedAt;
+
+	/** Per-platform post ids / errors JSON, e.g. {"youtube":"abc","tiktok":"err:…"}. */
+	@Column(name = "post_results_json", columnDefinition = "text")
+	private String postResultsJson;
 }
