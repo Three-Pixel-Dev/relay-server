@@ -70,7 +70,9 @@ public class SecurityConfig {
 					"/api/auth/signup",
 					"/api/auth/login",
 					"/api/auth/google",
-					"/api/auth/refresh-token").permitAll();
+					"/api/auth/refresh-token",
+					"/api/auth/forgot-password",
+					"/api/auth/reset-password").permitAll();
 			auth.requestMatchers(HttpMethod.GET, "/api/subscription/plans").permitAll();
 			auth.requestMatchers(HttpMethod.POST, "/api/subscription/webhooks/stripe").permitAll();
 			auth.requestMatchers(HttpMethod.GET, "/api/gmail/oauth/callback").permitAll();
