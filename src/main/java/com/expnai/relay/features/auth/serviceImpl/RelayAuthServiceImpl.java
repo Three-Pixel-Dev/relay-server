@@ -3,11 +3,15 @@ package com.expnai.relay.features.auth.serviceImpl;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -19,6 +23,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import com.expnai.relay.common.exception.BusinessRuleException;
 import com.expnai.relay.common.exception.InvalidSessionException;
@@ -26,18 +31,22 @@ import com.expnai.relay.common.exception.ResourceConflictException;
 import com.expnai.relay.common.exception.ResourceNotFoundException;
 import com.expnai.relay.common.security.RelayJwtService;
 import com.expnai.relay.common.web.ApiResponse;
+import com.expnai.relay.domain.entity.RelayPasswordResetToken;
 import com.expnai.relay.domain.entity.RelaySubscription;
 import com.expnai.relay.domain.entity.RelayUser;
 import com.expnai.relay.domain.entity.RelayUserSession;
 import com.expnai.relay.domain.enums.RelaySubscriptionStatus;
 import com.expnai.relay.domain.enums.RelayUserRole;
+import com.expnai.relay.domain.repository.RelayPasswordResetTokenRepository;
 import com.expnai.relay.domain.repository.RelaySubscriptionRepository;
 import com.expnai.relay.domain.repository.RelayUserRepository;
 import com.expnai.relay.domain.repository.RelayUserSessionRepository;
 import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
+import com.expnai.relay.features.auth.dto.request.RelayForgotPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
+import com.expnai.relay.features.auth.dto.request.RelayResetPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySetPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
 import com.expnai.relay.features.auth.dto.request.RelayUpdateProfileRequest;
@@ -45,6 +54,7 @@ import com.expnai.relay.features.auth.dto.response.RelayAuthMessageResponse;
 import com.expnai.relay.features.auth.dto.response.RelayLoginResponse;
 import com.expnai.relay.features.auth.dto.response.RelayMeResponse;
 import com.expnai.relay.features.auth.dto.response.RelaySessionResponse;
+import com.expnai.relay.features.auth.mail.RelayAuthMailService;
 import com.expnai.relay.features.auth.mapper.RelayAuthMapper;
 import com.expnai.relay.features.auth.security.RelayUserPrincipal;
 import com.expnai.relay.features.auth.service.GoogleIdTokenVerifierService;
@@ -61,15 +71,27 @@ public class RelayAuthServiceImpl implements RelayAuthService {
 			RelaySubscriptionStatus.ACTIVE,
 			RelaySubscriptionStatus.PAST_DUE);
 
+	private static final String FORGOT_PASSWORD_GENERIC_MESSAGE =
+			"If an account exists for that email, we sent password reset instructions.";
+
 	private final RelayUserRepository userRepository;
 	private final RelayUserSessionRepository sessionRepository;
 	private final RelaySubscriptionRepository subscriptionRepository;
+	private final RelayPasswordResetTokenRepository passwordResetTokenRepository;
 	private final PasswordEncoder passwordEncoder;
 	private final AuthenticationManager authenticationManager;
 	private final UserDetailsService userDetailsService;
 	private final RelayJwtService jwtService;
 	private final RelayAuthMapper authMapper;
 	private final GoogleIdTokenVerifierService googleIdTokenVerifierService;
+	private final RelayAuthMailService authMailService;
+	private final SecureRandom secureRandom = new SecureRandom();
+
+	@Value("${relay.app.frontend-base-url:http://localhost:5173}")
+	private String frontendBaseUrl;
+
+	@Value("${relay.auth.password-reset-ttl-minutes:60}")
+	private long passwordResetTtlMinutes;
 
 	@Override
 	@Transactional
@@ -258,6 +280,70 @@ public class RelayAuthServiceImpl implements RelayAuthService {
 	}
 
 	@Override
+	@Transactional
+	public ApiResponse<RelayAuthMessageResponse> forgotPassword(RelayForgotPasswordRequest request) {
+		String email = normalizeEmail(request.getEmail());
+		Optional<RelayUser> maybeUser = userRepository.findByEmailIgnoreCase(email);
+		if (maybeUser.isPresent()) {
+			RelayUser user = maybeUser.get();
+			boolean hasPassword = user.getPasswordHash() != null && !user.getPasswordHash().isBlank();
+			// Google-only (or otherwise passwordless) accounts: generic response, no email.
+			if (hasPassword && user.isEnable()) {
+				invalidateUnusedResetTokens(user.getId());
+				String rawToken = generateResetToken();
+				RelayPasswordResetToken token = new RelayPasswordResetToken();
+				token.setUser(user);
+				token.setTokenHash(sha256(rawToken));
+				token.setExpiresAt(Instant.now().plus(passwordResetTtlMinutes, ChronoUnit.MINUTES));
+				passwordResetTokenRepository.save(token);
+
+				String resetUrl = UriComponentsBuilder
+						.fromUriString(trimTrailingSlash(frontendBaseUrl))
+						.path("/reset-password")
+						.queryParam("token", rawToken)
+						.build(true)
+						.toUriString();
+				authMailService.sendPasswordReset(user.getEmail(), resetUrl);
+			}
+		}
+		return ApiResponse.ok(
+				FORGOT_PASSWORD_GENERIC_MESSAGE,
+				new RelayAuthMessageResponse(FORGOT_PASSWORD_GENERIC_MESSAGE));
+	}
+
+	@Override
+	@Transactional
+	public ApiResponse<RelayAuthMessageResponse> resetPassword(RelayResetPasswordRequest request) {
+		String tokenHash = sha256(request.getToken().trim());
+		RelayPasswordResetToken token = passwordResetTokenRepository
+				.findByTokenHashAndUsedAtIsNull(tokenHash)
+				.orElseThrow(() -> new BusinessRuleException("This reset link is invalid or has already been used."));
+
+		if (token.getExpiresAt().isBefore(Instant.now())) {
+			token.setUsedAt(Instant.now());
+			passwordResetTokenRepository.save(token);
+			throw new BusinessRuleException("This reset link has expired. Request a new one.");
+		}
+
+		RelayUser user = token.getUser();
+		if (user == null || !user.isEnable()) {
+			throw new BusinessRuleException("This reset link is invalid or has already been used.");
+		}
+
+		user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+		user.setTokenVersion(user.getTokenVersion() + 1);
+		userRepository.save(user);
+
+		token.setUsedAt(Instant.now());
+		passwordResetTokenRepository.save(token);
+		invalidateUnusedResetTokens(user.getId());
+		revokeAllSessions(user.getId());
+
+		String message = "Password updated. You can sign in with your new password.";
+		return ApiResponse.ok(message, new RelayAuthMessageResponse(message));
+	}
+
+	@Override
 	@Transactional(readOnly = true)
 	public ApiResponse<List<RelaySessionResponse>> listSessions() {
 		RelayUserPrincipal principal = currentPrincipal();
@@ -403,6 +489,31 @@ public class RelayAuthServiceImpl implements RelayAuthService {
 			return "Windows";
 		}
 		return trim(userAgent, 150);
+	}
+
+	private void invalidateUnusedResetTokens(Long userId) {
+		Instant now = Instant.now();
+		for (RelayPasswordResetToken existing : passwordResetTokenRepository.findByUserIdAndUsedAtIsNull(userId)) {
+			existing.setUsedAt(now);
+			passwordResetTokenRepository.save(existing);
+		}
+	}
+
+	private String generateResetToken() {
+		byte[] bytes = new byte[32];
+		secureRandom.nextBytes(bytes);
+		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+	}
+
+	private String trimTrailingSlash(String value) {
+		if (value == null || value.isBlank()) {
+			return "http://localhost:5173";
+		}
+		String trimmed = value.trim();
+		while (trimmed.endsWith("/")) {
+			trimmed = trimmed.substring(0, trimmed.length() - 1);
+		}
+		return trimmed;
 	}
 
 	private String sha256(String value) {

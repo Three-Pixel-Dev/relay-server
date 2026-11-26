@@ -13,9 +13,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.expnai.relay.common.web.ApiResponse;
 import com.expnai.relay.features.auth.dto.request.RelayClientInfo;
+import com.expnai.relay.features.auth.dto.request.RelayForgotPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelayGoogleLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayLoginRequest;
 import com.expnai.relay.features.auth.dto.request.RelayRefreshTokenRequest;
+import com.expnai.relay.features.auth.dto.request.RelayResetPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySetPasswordRequest;
 import com.expnai.relay.features.auth.dto.request.RelaySignupRequest;
 import com.expnai.relay.features.auth.dto.request.RelayUpdateProfileRequest;
@@ -87,6 +89,18 @@ public class RelayAuthController {
 	@Operation(summary = "Set or change password (Google users can set one here)")
 	public ApiResponse<RelayMeResponse> setPassword(@Valid @RequestBody RelaySetPasswordRequest request) {
 		return authService.setPassword(request);
+	}
+
+	@PostMapping("/forgot-password")
+	@Operation(summary = "Request a password reset email (always returns a generic success message)")
+	public ApiResponse<RelayAuthMessageResponse> forgotPassword(@Valid @RequestBody RelayForgotPasswordRequest request) {
+		return authService.forgotPassword(request);
+	}
+
+	@PostMapping("/reset-password")
+	@Operation(summary = "Set a new password using a single-use reset token from email")
+	public ApiResponse<RelayAuthMessageResponse> resetPassword(@Valid @RequestBody RelayResetPasswordRequest request) {
+		return authService.resetPassword(request);
 	}
 
 	@GetMapping("/sessions")
